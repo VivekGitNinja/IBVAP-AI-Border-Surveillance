@@ -1,4 +1,4 @@
-# Intelligent Border Video Analytics Platform (IBVAP)
+# AI Border Surveillance & Perimeter Defense Platform (IBVAP)
 ## Smart India Hackathon (SIH) 2026 — Problem Statement SIH26187
 ### Sashastra Seema Bal (SSB) / Ministry of Home Affairs (MHA)
 

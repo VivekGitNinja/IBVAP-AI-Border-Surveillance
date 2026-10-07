@@ -1,4 +1,4 @@
-# IBVAP — Intelligent Border & Perimeter Video Analytics Platform
+# AI Border Surveillance & Perimeter Defense Platform (IBVAP)
 
 [![Platform Status](https://img.shields.io/badge/System-Production--Grade%20v2.4-brightgreen.svg)]()
 [![Architecture](https://img.shields.io/badge/Compute-100%25%20Air--Gapped%20Edge-blue.svg)]()
