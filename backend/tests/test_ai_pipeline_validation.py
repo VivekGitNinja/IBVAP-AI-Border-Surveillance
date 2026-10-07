@@ -22,6 +22,7 @@ import pytest
 from edge.detection.factory import create_detector
 from edge.detection.yolo26 import YOLO26Detector
 from edge.detection.yolo11 import YOLO11Detector
+from edge.detection.onnx_detector import ONNXDetector
 from edge.detection.base import Detection
 from edge.tracking.bytetrack import ByteTracker
 from edge.modules.night_enhance import NightEnhancer
@@ -38,7 +39,7 @@ class TestYOLODetectionPipeline:
     def test_yolo26_model_inference_and_latency(self):
         """Verify YOLO26n loads genuine weights and runs sub-50ms inference at 640x640."""
         detector = create_detector(preferred="yolo26n", confidence_threshold=0.25)
-        assert isinstance(detector, (YOLO26Detector, YOLO11Detector))
+        assert isinstance(detector, (YOLO26Detector, YOLO11Detector, ONNXDetector))
 
         # Test frame
         test_frame = np.zeros((640, 640, 3), dtype=np.uint8)
