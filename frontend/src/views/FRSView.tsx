@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { api } from "../api";
 import { playTacticalTone, fmtTime } from "../utils/audio";
 
@@ -199,7 +199,7 @@ export function FRSView({ openInc }: { openInc?: (id: number) => void }) {
       </div>
 
       {feedback && (
-        <div className={`test-feedback ${feedback.includes("error") ? "fail" : "success"}`} style={{ marginBottom: 16 }}>
+        <div className={`test-feedback ${String(feedback).toLowerCase().includes("error") ? "fail" : "success"}`} style={{ marginBottom: 16 }}>
           {feedback}
         </div>
       )}

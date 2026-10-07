@@ -87,7 +87,7 @@ def test_evidence_verify_endpoint(tmp_path):
 
 def test_system_readiness_endpoint():
     """Verify GET /api/v1/system/readiness reports components without runtime downloads."""
-    resp = client.get("/api/v1/system/readiness")
+    resp = client.get("/api/v1/system/readiness", headers=auth_headers())
     assert resp.status_code == 200
     data = resp.json()
 
@@ -173,7 +173,7 @@ def test_analysis_report_export_json_and_pdf():
         db.commit()
 
         # 1. Query JSON format
-        resp_json = client.get(f"/api/v1/analysis/jobs/{job.id}/report?format=json")
+        resp_json = client.get(f"/api/v1/analysis/jobs/{job.id}/report?format=json", headers=auth_headers())
         assert resp_json.status_code == 200
         rpt = resp_json.json()
         assert rpt["job"]["id"] == job.id
@@ -183,7 +183,7 @@ def test_analysis_report_export_json_and_pdf():
         assert len(rpt["evidence"]) >= 1
 
         # 2. Query PDF format
-        resp_pdf = client.get(f"/api/v1/analysis/jobs/{job.id}/report?format=pdf")
+        resp_pdf = client.get(f"/api/v1/analysis/jobs/{job.id}/report?format=pdf", headers=auth_headers())
         assert resp_pdf.status_code == 200
         assert resp_pdf.headers["content-type"] == "application/pdf"
         pdf_bytes = resp_pdf.content

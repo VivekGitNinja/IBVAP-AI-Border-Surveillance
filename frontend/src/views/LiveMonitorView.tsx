@@ -26,31 +26,54 @@ export function LiveMonitorView({
   const [zoneStudioCamId, setZoneStudioCamId] = useState<number | null>(null);
   const [scrambleIncident, setScrambleIncident] = useState<Incident | null>(null);
   const [legalCertIncident, setLegalCertIncident] = useState<Incident | null>(null);
+  const authToken = typeof localStorage !== 'undefined' ? (localStorage.getItem('ibvap_token') || localStorage.getItem('token') || '') : '';
 
-  // Prioritize physical/real hardware cameras at the top of the grid
+  // Helper to determine if camera is online/active
+  const isCameraOnline = (s?: string | null, active?: boolean) => {
+    if (active) return true;
+    if (!s) return false;
+    const u = s.toUpperCase();
+    return u === 'ONLINE' || u === 'HEALTHY' || u === 'DEGRADED';
+  };
+
+  // Prioritize active cameras and local Mac/USB hardware webcams at the top
   const sortedCameras = [...cameras].sort((a, b) => {
-    const aReal = !a.stream_url?.startsWith('demo://');
-    const bReal = !b.stream_url?.startsWith('demo://');
-    if (aReal && !bReal) return -1;
-    if (!aReal && bReal) return 1;
+    // 1. Online cameras first
+    const aOnline = isCameraOnline(a.status, a.active) ? 1 : 0;
+    const bOnline = isCameraOnline(b.status, b.active) ? 1 : 0;
+    if (aOnline !== bOnline) return bOnline - aOnline;
+
+    // 2. Local Mac/USB hardware webcams first
+    const aUsb = ((a.stream_url || '').startsWith('usb://') || (a.name || '').toLowerCase().includes('mac')) ? 1 : 0;
+    const bUsb = ((b.stream_url || '').startsWith('usb://') || (b.name || '').toLowerCase().includes('mac')) ? 1 : 0;
+    if (aUsb !== bUsb) return bUsb - aUsb;
+
+    // 3. Real streams before demo streams
+    const aReal = !(a.stream_url || '').startsWith('demo://') ? 1 : 0;
+    const bReal = !(b.stream_url || '').startsWith('demo://') ? 1 : 0;
+    if (aReal !== bReal) return bReal - aReal;
+
     return a.id - b.id;
   });
 
-  const physicalCount = cameras.filter((c) => !c.stream_url?.startsWith('demo://')).length;
-  const onlineCount = cameras.filter((c) => c.status === 'ONLINE').length;
-  const alertCount = cameras.filter((c) => c.health_score < 70 || c.status !== 'ONLINE').length;
+  const macCam = cameras.find((c) => (c.stream_url || '').startsWith('usb://') || (c.name || '').toLowerCase().includes('mac'));
+  const physicalCount = cameras.filter((c) => !(c.stream_url || '').startsWith('demo://')).length;
+  const onlineCount = cameras.filter((c) => isCameraOnline(c.status, c.active)).length;
+  const alertCount = cameras.filter((c) => (c.health_score ?? 100) < 70 || !isCameraOnline(c.status, c.active)).length;
 
   // Filter cameras
   const filteredCameras = sortedCameras.filter((c) => {
-    if (filterMode === 'hardware') return !c.stream_url?.startsWith('demo://');
-    if (filterMode === 'online') return c.status === 'ONLINE';
-    if (filterMode === 'alert') return c.health_score < 70 || c.status !== 'ONLINE';
+    if (filterMode === 'hardware') return !(c.stream_url || '').startsWith('demo://');
+    if (filterMode === 'online') return isCameraOnline(c.status, c.active);
+    if (filterMode === 'alert') return (c.health_score ?? 100) < 70 || !isCameraOnline(c.status, c.active);
     return true;
   });
 
-  // Effective active camera for theater view
+  // Effective active camera for theater view: prefer active selection, then Mac camera, then first online
   const activeTheaterCam =
     filteredCameras.find((c) => c.id === theaterActiveId) ||
+    filteredCameras.find((c) => (c.stream_url || '').startsWith('usb://') || (c.name || '').toLowerCase().includes('mac')) ||
+    filteredCameras.find((c) => isCameraOnline(c.status, c.active)) ||
     filteredCameras[0] ||
     sortedCameras[0] ||
     null;
@@ -90,6 +113,33 @@ export function LiveMonitorView({
               title="Release all local hardware webcams and turn off camera LEDs"
             >
               🔌 Power Off All Cameras
+            </button>
+          )}
+          {macCam && (
+            <button
+              className="btn btn-secondary"
+              onClick={async () => {
+                playTacticalTone('click');
+                if (!isCameraOnline(macCam.status, macCam.active)) {
+                  try {
+                    await api.connectCamera(macCam.id);
+                    onRefresh();
+                  } catch (e: any) {
+                    alert(`Failed to power on Mac camera: ${e?.message || e}`);
+                  }
+                }
+                setTheaterActiveId(macCam.id);
+                setGridLayout('theater');
+              }}
+              style={{
+                borderColor: isCameraOnline(macCam.status, macCam.active) ? '#00ff9d' : '#00f0ff',
+                color: isCameraOnline(macCam.status, macCam.active) ? '#00ff9d' : '#00f0ff',
+                background: isCameraOnline(macCam.status, macCam.active) ? 'rgba(0, 255, 157, 0.12)' : 'rgba(0, 240, 255, 0.12)',
+                fontWeight: 600,
+              }}
+              title="Focus Mac FaceTime HD Hardware Camera in Theater View"
+            >
+              📷 {isCameraOnline(macCam.status, macCam.active) ? 'Mac Cam (LIVE)' : 'Mac Cam (STANDBY)'}
             </button>
           )}
           <button
@@ -156,7 +206,7 @@ export function LiveMonitorView({
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>
-                    Post: <b>{inc.camera_name || 'BOP Sector Perimeter'}</b> • Evidence: <b>SHA-256 Bit-Sealed</b> • Forensic Admissibility: <b>BSA 2023 §63</b>
+                    Post: <b>{inc.camera_name || 'BOP Sector Perimeter'}</b> • Evidence: <b>SHA-256 Bit-Sealed</b> • Technical Standard: <b>BSA 2023 §63 Aligned</b>
                   </div>
                 </div>
               </div>
@@ -317,7 +367,7 @@ export function LiveMonitorView({
                     >
                       <img
                         className="theater-thumb-img"
-                        src={`/api/v1/cameras/${c.id}/snapshot`}
+                        src={`/api/v1/cameras/${c.id}/snapshot${authToken ? `?token=${encodeURIComponent(authToken)}` : ''}`}
                         alt={c.name}
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
@@ -376,7 +426,7 @@ export function LiveMonitorView({
         />
       )}
 
-      {/* Official Court-Admissible Section 63 BSA Certificate Modal */}
+      {/* Official Section 63 BSA Certificate Modal */}
       {legalCertIncident && (
         <LegalCertificateModal
           cert={{
@@ -406,14 +456,16 @@ const DashboardCamFrame = React.memo(function DashboardCamFrame({ cameraId, came
     const iv = setInterval(() => setTick(t => t + 1), 2000);
     return () => clearInterval(iv);
   }, []);
+  const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('ibvap_token') || localStorage.getItem('token')) : '';
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
   return (
     <div className="tactical-cam-frame">
       <img
-        src={`/api/v1/cameras/${cameraId}/snapshot?t=${tick}`}
+        src={`/api/v1/cameras/${cameraId}/snapshot?t=${tick}${tokenParam}`}
         alt={cameraName}
         onError={(e) => {
           const target = e.target as HTMLImageElement;
-          setTimeout(() => { target.src = `/api/v1/cameras/${cameraId}/snapshot?t=${Date.now()}`; }, 3000);
+          setTimeout(() => { target.src = `/api/v1/cameras/${cameraId}/snapshot?t=${Date.now()}${tokenParam}`; }, 3000);
         }}
       />
       <div className="corner-bracket cb-top-left" />
@@ -442,7 +494,11 @@ function CameraFeed({
   const [testResult, setTestResult] = useState<{ status: string; resolution?: string; fps?: number; error?: string } | null>(null);
   const [imgKey, setImgKey] = useState(0);
   const [liveFps, setLiveFps] = useState(camera.fps || 15);
+  const handleFpsUpdate = React.useCallback((fps: number) => setLiveFps(fps), []);
   const isReal = !camera.stream_url?.startsWith('demo://');
+
+  const [togglingPower, setTogglingPower] = useState(false);
+  const isPoweredOn = camera.active === true || camera.status === 'ONLINE' || camera.status === 'HEALTHY' || camera.status === 'DEGRADED';
 
   const handleTestLink = async () => {
     setTestingLink(true);
@@ -459,16 +515,38 @@ function CameraFeed({
     }
   };
 
-  const snapshotUrl = `/api/v1/cameras/${camera.id}/snapshot?t=${imgKey}`;
+  const handleTogglePower = async () => {
+    setTogglingPower(true);
+    playTacticalTone('click');
+    try {
+      if (isPoweredOn) {
+        await api.disconnectCamera(camera.id);
+        playTacticalTone('verify');
+      } else {
+        await api.connectCamera(camera.id);
+        playTacticalTone('verify');
+      }
+      onRefresh();
+    } catch (err: any) {
+      alert(`Camera power control error: ${err.message || 'Action failed'}`);
+      playTacticalTone('alert');
+    } finally {
+      setTogglingPower(false);
+    }
+  };
+
+  const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('ibvap_token') || localStorage.getItem('token')) : '';
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+  const snapshotUrl = `/api/v1/cameras/${camera.id}/snapshot?t=${imgKey}${tokenParam}`;
 
   // Auto-refresh snapshot every 1.5s when WS stream is paused
   useEffect(() => {
-    if (detecting) return;
+    if (detecting && isPoweredOn) return;
     const interval = setInterval(() => {
       setImgKey(k => k + 1);
     }, 1500);
     return () => clearInterval(interval);
-  }, [detecting]);
+  }, [detecting, isPoweredOn]);
 
   const toggleStream = () => {
     playTacticalTone('click');
@@ -502,7 +580,7 @@ function CameraFeed({
       status={camera.status}
       fps={liveFps}
       resolution={camera.resolution || '1280x720'}
-      isRecording={detecting}
+      isRecording={detecting && isPoweredOn}
       recTimestamp={new Date().toISOString().substring(11, 19)}
       variant="card"
       className={`camera-feed ${isReal ? 'hardware-node' : ''}`}
@@ -519,8 +597,8 @@ function CameraFeed({
           cameraId={camera.id}
           cameraName={camera.name}
           fallbackSnapshotUrl={snapshotUrl}
-          isStreaming={detecting}
-          onFpsUpdate={(fps) => setLiveFps(fps)}
+          isStreaming={detecting && isPoweredOn}
+          onFpsUpdate={handleFpsUpdate}
         />
         <div className="corner-bracket cb-top-left" />
         <div className="corner-bracket cb-top-right" />
@@ -534,7 +612,11 @@ function CameraFeed({
             {camera.bop || 'BOP-01'} // {camera.name}
           </span>
           <span className="feed-hud-right">
-            {detecting && <span className="detect-badge">LIVE WS • YOLO26</span>}
+            {isPoweredOn ? (
+              detecting ? <span className="detect-badge">LIVE WS • YOLO26</span> : <span className="page-tag" style={{ background: 'rgba(255, 170, 0, 0.2)', color: '#ffaa00' }}>PAUSED</span>
+            ) : (
+              <span className="page-tag" style={{ background: 'rgba(100, 100, 100, 0.4)', color: '#aaa' }}>POWERED OFF</span>
+            )}
             <span className={`health-dot-sm ${camera.status.toLowerCase()}`} />
           </span>
         </div>
@@ -543,14 +625,38 @@ function CameraFeed({
       <div className="camera-feed-info">
         <div className="feed-details">
           <span className="feed-detail"><label>Health</label><b className={camera.health_score < 50 ? 'low' : ''}>{camera.health_score.toFixed(0)}%</b></span>
-          <span className="feed-detail"><label>FPS</label>{liveFps}</span>
+          <span className="feed-detail"><label>FPS</label>{isPoweredOn ? liveFps : 0}</span>
           <span className="feed-detail"><label>Res</label>{camera.resolution || '1280x720'}</span>
           <span className="feed-detail"><label>Type</label><span style={{ color: isReal ? '#00ff9d' : 'inherit' }}>{camera.stream_url?.startsWith('usb://') ? 'USB/WEBCAM' : (camera.camera_type || 'RTSP')}</span></span>
         </div>
         <div className="feed-actions">
-          <button className={`btn btn-sm ${detecting ? 'btn-warn' : 'btn-primary'}`} onClick={toggleStream}>
-            {detecting ? '⏹ Pause Stream' : '▶ Live Stream'}
+          {/* Main Hardware Power Toggle Button */}
+          <button
+            className={`btn btn-sm ${isPoweredOn ? 'btn-danger' : 'btn-success'}`}
+            style={{
+              background: isPoweredOn ? 'rgba(255, 42, 85, 0.2)' : 'rgba(0, 255, 157, 0.2)',
+              borderColor: isPoweredOn ? '#ff2a55' : '#00ff9d',
+              color: isPoweredOn ? '#ff2a55' : '#00ff9d',
+              fontWeight: 'bold',
+            }}
+            onClick={handleTogglePower}
+            disabled={togglingPower}
+            title={isPoweredOn ? "Power OFF hardware sensor, stop AI pipeline, and release webcam" : "Power ON camera sensor, initialize video stream, and start live AI detection"}
+          >
+            {togglingPower ? 'Switching...' : isPoweredOn ? '🔌 Power OFF' : '⚡ Power ON'}
           </button>
+
+          {/* Pause / Play View Button */}
+          {isPoweredOn && (
+            <button
+              className={`btn btn-sm ${detecting ? 'btn-warn' : 'btn-primary'}`}
+              onClick={toggleStream}
+              title={detecting ? "Pause browser canvas stream" : "Resume browser canvas stream"}
+            >
+              {detecting ? '⏸ Pause View' : '▶ Play View'}
+            </button>
+          )}
+
           {onOpenZoneStudio && (
             <button
               className="btn btn-sm btn-secondary"
@@ -576,17 +682,6 @@ function CameraFeed({
           >
             {testingLink ? 'Testing...' : '📡 Test Link'}
           </button>
-          {isReal && (
-            <button
-              className="btn btn-sm btn-danger"
-              style={{ background: 'rgba(255, 42, 85, 0.15)', borderColor: '#ff2a55', color: '#ff2a55' }}
-              onClick={handleDisconnect}
-              disabled={disconnecting}
-              title="Disconnect and Power Off Camera Hardware"
-            >
-              {disconnecting ? 'Disconnecting...' : '🔌 Power Off'}
-            </button>
-          )}
           <button
             className="btn btn-sm btn-danger"
             onClick={async () => {
@@ -1113,10 +1208,12 @@ function UniversalCameraStudio({ onDone, onCancel }: { onDone: () => void; onCan
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {found.map((c, i) => {
-                      const isTapo = c.brand_hint?.includes('Tapo');
-                      const isAzureWave = c.brand_hint?.includes('AzureWave');
-                      const isMobile = c.brand_hint?.includes('Mobile');
+                      const hint = String(c.brand_hint || '');
+                      const isTapo = hint.includes('Tapo');
+                      const isAzureWave = hint.includes('AzureWave');
+                      const isMobile = hint.includes('Mobile');
                       const isGw = c.is_gateway;
+                      const statStr = String(c.status || '');
 
                       return (
                         <div key={i} className="discovered-camera-card">
@@ -1139,7 +1236,7 @@ function UniversalCameraStudio({ onDone, onCancel }: { onDone: () => void; onCan
                               </div>
 
                               <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
-                                <span style={{ color: c.status?.includes('Active') || c.status?.includes('Node') ? '#00ff9d' : '#ffaa00' }}>
+                                <span style={{ color: statStr.includes('Active') || statStr.includes('Node') ? '#00ff9d' : '#ffaa00' }}>
                                   ● {c.status}
                                 </span>
                                 {c.open_ports?.length > 0 && (

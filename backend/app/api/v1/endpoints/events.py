@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.db.session import get_db
 from backend.app.models.event import Event
 from backend.app.schemas.common import EventOut
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -17,6 +18,7 @@ def list_events(
     event_type: str | None = None,
     limit: int = 100,
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
 ):
     """List events with optional filters."""
     q = db.query(Event)

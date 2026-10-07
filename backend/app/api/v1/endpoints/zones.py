@@ -8,13 +8,17 @@ from backend.app.db.session import get_db
 from backend.app.models.zone import Zone
 from backend.app.schemas.common import ZoneIn, ZonePatchIn, ZoneOut
 from backend.app.services.audit import log_action
-from backend.app.api.deps import current_user
+from backend.app.api.deps import current_user, require_permission
 
 router = APIRouter()
 
 
 @router.get("", response_model=list[ZoneOut])
-def list_zones(camera_id: int | None = None, db: Session = Depends(get_db)):
+def list_zones(
+    camera_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """List zones, optionally filtered by camera."""
     q = db.query(Zone)
     if camera_id is not None:
@@ -23,8 +27,11 @@ def list_zones(camera_id: int | None = None, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=ZoneOut, status_code=201)
-def add_zone(data: ZoneIn, db: Session = Depends(get_db),
-             user: dict = Depends(current_user)):
+def add_zone(
+    data: ZoneIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_zones")),
+):
     """Create a new zone with validation."""
     dump = data.model_dump()
     dump["created_by"] = user.get("sub", "operator")
@@ -38,7 +45,11 @@ def add_zone(data: ZoneIn, db: Session = Depends(get_db),
 
 
 @router.get("/{zone_id}", response_model=ZoneOut)
-def get_zone(zone_id: int, db: Session = Depends(get_db)):
+def get_zone(
+    zone_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get zone details."""
     z = db.get(Zone, zone_id)
     if not z:
@@ -47,8 +58,12 @@ def get_zone(zone_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{zone_id}", response_model=ZoneOut)
-def update_zone(zone_id: int, data: ZoneIn, db: Session = Depends(get_db),
-                user: dict = Depends(current_user)):
+def update_zone(
+    zone_id: int,
+    data: ZoneIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_zones")),
+):
     """Update an entire zone definition."""
     z = db.get(Zone, zone_id)
     if not z:
@@ -63,8 +78,12 @@ def update_zone(zone_id: int, data: ZoneIn, db: Session = Depends(get_db),
 
 
 @router.patch("/{zone_id}", response_model=ZoneOut)
-def patch_zone(zone_id: int, data: ZonePatchIn, db: Session = Depends(get_db),
-               user: dict = Depends(current_user)):
+def patch_zone(
+    zone_id: int,
+    data: ZonePatchIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_zones")),
+):
     """Partially update a zone."""
     z = db.get(Zone, zone_id)
     if not z:
@@ -88,8 +107,11 @@ def patch_zone(zone_id: int, data: ZonePatchIn, db: Session = Depends(get_db),
 
 
 @router.delete("/{zone_id}")
-def delete_zone(zone_id: int, db: Session = Depends(get_db),
-                user: dict = Depends(current_user)):
+def delete_zone(
+    zone_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_zones")),
+):
     """Delete a zone."""
     z = db.get(Zone, zone_id)
     if not z:
@@ -98,5 +120,4 @@ def delete_zone(zone_id: int, db: Session = Depends(get_db),
     db.commit()
     log_action(db, user["sub"], user.get("role", ""), "DELETE", "zone",
                str(zone_id))
-    return {"deleted": True}
-
+    return {"deleted": True, "zone_id": zone_id}

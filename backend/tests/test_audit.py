@@ -10,7 +10,8 @@ client = TestClient(app)
 
 
 def _auth_headers(role="OPERATOR"):
-    token = create_access_token("operator", role)
+    username = role.lower()
+    token = create_access_token(username, role)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -32,7 +33,7 @@ def _ensure_operator():
 def _seed(scenario="intrusion"):
     """Seed a demo incident."""
     _ensure_operator()
-    return client.post(f"/api/v1/demo/seed?scenario={scenario}")
+    return client.post(f"/api/v1/demo/seed?scenario={scenario}", headers=_auth_headers("ADMIN"))
 
 
 def test_demo_creates_incident():
@@ -58,7 +59,7 @@ def test_incident_escalate():
     """Escalate flow should update status."""
     r = _seed("night_movement")
     inc_id = r.json()["incident_id"]
-    r = client.post(f"/api/v1/incidents/{inc_id}/escalate", headers=_auth_headers())
+    r = client.post(f"/api/v1/incidents/{inc_id}/escalate", headers=_auth_headers("COMMANDER"))
     assert r.status_code == 200
     assert r.json()["status"] == "ESCALATED"
 
@@ -76,7 +77,7 @@ def test_incident_timeline():
     """Incident should have a timeline endpoint."""
     r = _seed("intrusion")
     inc_id = r.json()["incident_id"]
-    r = client.get(f"/api/v1/incidents/{inc_id}/timeline")
+    r = client.get(f"/api/v1/incidents/{inc_id}/timeline", headers=_auth_headers())
     assert r.status_code == 200
     assert "timeline" in r.json()
     assert len(r.json()["timeline"]) > 0
@@ -94,7 +95,7 @@ def test_evidence_verify():
 
 def test_cameras_list():
     """Should list demo cameras."""
-    r = client.get("/api/v1/cameras")
+    r = client.get("/api/v1/cameras", headers=_auth_headers())
     assert r.status_code == 200
     assert len(r.json()) >= 1
 
@@ -102,7 +103,7 @@ def test_cameras_list():
 def test_zones_list():
     """Should list zones after demo seed."""
     _seed("intrusion")
-    r = client.get("/api/v1/zones")
+    r = client.get("/api/v1/zones", headers=_auth_headers())
     assert r.status_code == 200
     assert len(r.json()) >= 1
 
@@ -118,14 +119,19 @@ def test_auth_token():
 
 
 def test_system_status():
-    """System status should return operational info from both /status and /health/status."""
-    r1 = client.get("/api/v1/status")
+    """System status should return operational info when authenticated, and reject anonymous access."""
+    # Anonymous access must be rejected with 401
+    assert client.get("/api/v1/status").status_code == 401
+    assert client.get("/api/v1/health/status").status_code == 401
+
+    headers = _auth_headers("OPERATOR")
+    r1 = client.get("/api/v1/status", headers=headers)
     assert r1.status_code == 200
     data1 = r1.json()
     assert data1["status"] == "operational"
     assert "cameras_total" in data1
 
-    r2 = client.get("/api/v1/health/status")
+    r2 = client.get("/api/v1/health/status", headers=headers)
     assert r2.status_code == 200
     data2 = r2.json()
     assert data2["status"] == "operational"

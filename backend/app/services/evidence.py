@@ -195,8 +195,9 @@ def generate_section_65b_certificate(
     certifying_officer: str = "Duty Commander, SSB Control Room",
     officer_rank: str = "Assistant Commandant",
 ) -> dict[str, Any]:
-    """Generate a legally binding Certificate under Section 65B of the Indian Evidence Act, 1872
-    (Section 63 of Bharatiya Sakshya Adhiniyam, 2023) for court admissibility of electronic surveillance records.
+    """Generate an electronic evidence certificate under Section 63 of Bharatiya Sakshya Adhiniyam, 2023.
+    Implemented technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements.
+    Per-case statutory certificate generation remains an operational/legal prerequisite.
     """
     ts_now = datetime.now(timezone.utc).isoformat()
     cert_id = f"BSA63-{datetime.utcnow().strftime('%Y%m%d')}-{incident_code[-8:]}"
@@ -229,7 +230,7 @@ def generate_section_65b_certificate(
         "officer_rank": officer_rank,
         "generated_at": ts_now,
         "legal_declaration": legal_declaration,
-        "admissibility_status": "VALID & COURT-ADMISSIBLE",
+        "admissibility_status": "Supports evidential integrity, provenance and chain-of-custody requirements relevant to electronic evidence under Bharatiya Sakshya Adhiniyam, 2023 §63; legal admissibility remains subject to judicial assessment under applicable procedural law.",
     }
 
     return cert_data

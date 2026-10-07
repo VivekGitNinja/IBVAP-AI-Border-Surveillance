@@ -59,11 +59,16 @@ export function AnalyticsDashboard() {
 
   // Filter items if user clicked a BOP on the tactical map
   const filteredCameras = selectedBop
-    ? cameras.filter((c: Camera) => c.bop?.toLowerCase() === selectedBop.toLowerCase())
+    ? cameras.filter((c: Camera) => (c.bop || '').toLowerCase() === selectedBop.toLowerCase())
     : cameras;
 
   const filteredIncidents = selectedBop
-    ? incidents.filter((i: Incident) => i.camera_name?.includes(selectedBop) || i.description?.includes(selectedBop))
+    ? incidents.filter((i: Incident) => {
+        const cname = (i.camera_name || '').toLowerCase();
+        const desc = (i.description || '').toLowerCase();
+        const sb = selectedBop.toLowerCase();
+        return cname.includes(sb) || desc.includes(sb);
+      })
     : incidents;
 
   return (
@@ -75,10 +80,10 @@ export function AnalyticsDashboard() {
           <div className="sector-pill-selector">
             {[
               { id: null, label: 'All Sectors', count: cameras.length },
-              { id: 'BOP-01', label: 'BOP-01 Alpha', count: cameras.filter((c: Camera) => c.bop?.includes('01')).length || 1 },
-              { id: 'BOP-02', label: 'BOP-02 Bravo', count: cameras.filter((c: Camera) => c.bop?.includes('02')).length || 1 },
-              { id: 'BOP-03', label: 'BOP-03 Charlie', count: cameras.filter((c: Camera) => c.bop?.includes('03')).length || 1 },
-              { id: 'BOP-04', label: 'BOP-04 Delta', count: cameras.filter((c: Camera) => c.bop?.includes('04')).length || 1 },
+              { id: 'BOP-01', label: 'BOP-01 Alpha', count: cameras.filter((c: Camera) => (c.bop || '').includes('01')).length || 1 },
+              { id: 'BOP-02', label: 'BOP-02 Bravo', count: cameras.filter((c: Camera) => (c.bop || '').includes('02')).length || 1 },
+              { id: 'BOP-03', label: 'BOP-03 Charlie', count: cameras.filter((c: Camera) => (c.bop || '').includes('03')).length || 1 },
+              { id: 'BOP-04', label: 'BOP-04 Delta', count: cameras.filter((c: Camera) => (c.bop || '').includes('04')).length || 1 },
             ].map((opt) => {
               const active = selectedBop === opt.id;
               return (

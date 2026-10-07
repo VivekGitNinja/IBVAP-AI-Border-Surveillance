@@ -18,10 +18,13 @@ from backend.app.models.media_asset import MediaAsset
 from backend.app.models.analysis_job import AnalysisJob
 from backend.app.models.plate_read import PlateRead
 from backend.app.models.watchlist import Watchlist
+from backend.app.models.suppression import OperatorSuppression
+from backend.app.models.outbox import IncidentOutboxEvent
 
 __all__ = [
     "Base", "User", "Camera", "CameraHealth", "Zone", "Detection", "Track",
     "Event", "Incident", "Alert", "Evidence", "AuditLog", "SyncQueue",
     "SystemConfig", "MediaAsset", "AnalysisJob", "PlateRead", "Watchlist",
+    "OperatorSuppression", "IncidentOutboxEvent",
 ]
 

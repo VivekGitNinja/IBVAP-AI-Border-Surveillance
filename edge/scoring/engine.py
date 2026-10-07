@@ -1,2 +1,5 @@
-from backend.app.services.scoring import score
-__all__=['score']
+"""Edge scoring engine interface."""
+
+from backend.app.services.scoring import compute_threat_score, score
+
+__all__ = ["compute_threat_score", "score"]

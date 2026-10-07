@@ -14,6 +14,8 @@ __all__ = [
     "get_reid_engine",
     "get_rule_engine",
     "get_night_enhancer",
+    "DualSpectralFusionEngine",
+    "FastDehazeFilter",
 ]
 
 
@@ -35,3 +37,13 @@ def get_rule_engine(**kwargs):
 def get_night_enhancer(**kwargs):
     from .night_enhance import get_night_enhancer as _get
     return _get(**kwargs)
+
+
+def get_sensor_fusion_engine(**kwargs):
+    from .sensor_fusion import DualSpectralFusionEngine
+    return DualSpectralFusionEngine(**kwargs)
+
+
+def get_dehaze_filter(**kwargs):
+    from .dehaze import FastDehazeFilter
+    return FastDehazeFilter(**kwargs)

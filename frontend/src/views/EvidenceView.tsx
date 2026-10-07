@@ -50,7 +50,8 @@ export function EvidenceView({ incidents }: { incidents: Incident[] }) {
   const getEvidenceSrc = (e: Evidence) => {
     if (!e.file_path) return `/api/v1/media/1/stream`;
     const fname = e.file_path.split("/").pop() || "";
-    return `/data/evidence/clips/${fname}`;
+    const token = (typeof localStorage !== 'undefined' ? (localStorage.getItem('ibvap_token') || localStorage.getItem('token')) : '') || '';
+    return `/api/v1/evidence/vault/clips/${fname}?token=${encodeURIComponent(token)}`;
   };
 
   return (
@@ -59,7 +60,7 @@ export function EvidenceView({ incidents }: { incidents: Incident[] }) {
         <div>
           <h1>Forensic Cryptographic Evidence Locker</h1>
           <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
-            Tamper-evident, court-admissible surveillance artifacts sealed with SHA-256 cryptographic hashes & Bharatiya Sakshya Adhiniyam, 2023 Section 63 certificates
+            Tamper-evident surveillance artifacts sealed with SHA-256 cryptographic hashes; technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements
           </p>
         </div>
       </div>
@@ -152,7 +153,7 @@ export function EvidenceView({ incidents }: { incidents: Incident[] }) {
                   EVIDENCE RECORD #{selectedEvidence.id} // SECURE PLAYBACK
                 </h3>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                  Statute: Bharatiya Sakshya Adhiniyam, 2023 §63 Court Admissible Artifact
+                  Statute: Technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements
                 </div>
               </div>
               <button className="btn btn-sm btn-secondary" onClick={() => setSelectedEvidence(null)}>

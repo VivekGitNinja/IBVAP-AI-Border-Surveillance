@@ -5,7 +5,7 @@ from backend.app.api.v1.endpoints import (
     health, auth, cameras, zones, incidents, evidence,
     demo, events, audit, sync, metrics,
     anpr, frs, qrt, media, analysis,
-    plates, watchlist, system, map,
+    plates, watchlist, system, map, users, webrtc,
 )
 
 api = APIRouter()
@@ -14,6 +14,7 @@ api = APIRouter()
 api.include_router(health.router, prefix="/health", tags=["health"])
 api.add_api_route("/status", health.system_status, methods=["GET"], tags=["health"])
 api.include_router(auth.router, prefix="/auth", tags=["auth"])
+api.include_router(users.router, prefix="/users", tags=["users"])
 api.include_router(system.router, prefix="/system", tags=["system"])
 
 # Entities
@@ -40,3 +41,6 @@ api.include_router(metrics.router, prefix="/metrics", tags=["metrics"])
 
 # Demo
 api.include_router(demo.router, prefix="/demo", tags=["demo"])
+
+# Tactical WebRTC Low-Latency Streaming
+api.include_router(webrtc.router, prefix="/webrtc", tags=["webrtc"])

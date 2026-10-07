@@ -25,10 +25,10 @@ def auth_headers():
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_chaos_concurrent_request_storm(client):
+def test_chaos_concurrent_request_storm(client, auth_headers):
     """Chaos: 25 concurrent threads hammering API endpoints simultaneously."""
     def hit_endpoint(i):
-        return client.get(f"/api/v1/status?iter={i}")
+        return client.get(f"/api/v1/status?iter={i}", headers=auth_headers)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(hit_endpoint, i) for i in range(25)]
@@ -62,11 +62,11 @@ def test_chaos_sqli_and_fuzzed_payloads(client, auth_headers):
         assert res.status_code in (404, 422), f"Fuzzed input '{fuzzed}' resulted in unexpected status {res.status_code}"
 
 
-def test_chaos_cache_outage_graceful_degradation(client):
+def test_chaos_cache_outage_graceful_degradation(client, auth_headers):
     """Chaos: Simulate an abrupt cache outage while reading /status."""
     with patch.object(cache, "get", side_effect=RuntimeError("Redis connection abruptly severed")):
         # Application must gracefully fall back without returning 500 to the client
-        res = client.get("/api/v1/status")
+        res = client.get("/api/v1/status", headers=auth_headers)
         assert res.status_code == 200
         assert res.json()["status"] == "operational"
 

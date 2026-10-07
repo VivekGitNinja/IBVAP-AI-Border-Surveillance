@@ -23,7 +23,7 @@ Reference: https://github.com/holistics/bytetrack
 
 import time
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass, field
 import numpy as np
 
@@ -127,7 +127,8 @@ class KalmanBoxTracker:
     _std_weight_velocity = 1.0 / 160
 
     def __init__(self, bbox: List[float], class_id: int = 0,
-                 class_name: str = "unknown", confidence: float = 0.5):
+                 class_name: str = "unknown", confidence: float = 0.5,
+                 track_id: Optional[int] = None):
         """Initialize tracker with first detection.
         
         Args:
@@ -135,9 +136,13 @@ class KalmanBoxTracker:
             class_id: detection class ID
             class_name: detection class name
             confidence: detection confidence
+            track_id: optional explicit track ID (for multi-camera isolation)
         """
-        KalmanBoxTracker._count += 1
-        self.track_id = KalmanBoxTracker._count
+        if track_id is not None:
+            self.track_id = track_id
+        else:
+            KalmanBoxTracker._count += 1
+            self.track_id = KalmanBoxTracker._count
         self.class_id = class_id
         self.class_name = class_name
 
@@ -315,22 +320,28 @@ class KalmanBoxTracker:
     def to_dict(self) -> Dict:
         """Export track state as dictionary."""
         bbox = self.get_state()
+        cx = float((bbox[0] + bbox[2]) / 2.0)
+        cy = float((bbox[1] + bbox[3]) / 2.0)
+        ground_anchor = [float(round(cx, 1)), float(round(bbox[3], 1))]
         return {
-            "track_id": self.track_id,
-            "class_id": self.class_id,
-            "class_name": self.class_name,
-            "bbox": [round(b, 1) for b in bbox],
-            "confidence": round(self.confidence, 3),
-            "state": self.state,
-            "age": self.age,
-            "hits": self.hits,
-            "time_since_update": self.time_since_update,
-            "dwell_time": round(self.dwell_time, 1),
-            "direction": self.direction,
-            "speed": round(self.speed, 1),
-            "trajectory_length": len(self.trajectory),
-            "first_seen": self.first_seen,
-            "last_seen": self.last_seen,
+            "track_id": int(self.track_id),
+            "class_id": int(self.class_id),
+            "class_name": str(self.class_name),
+            "bbox": [float(round(b, 1)) for b in bbox],
+            "center": [float(round(cx, 1)), float(round(cy, 1))],
+            "ground_anchor": ground_anchor,
+            "footprint": ground_anchor,
+            "confidence": float(round(self.confidence, 3)),
+            "state": str(self.state),
+            "age": int(self.age),
+            "hits": int(self.hits),
+            "time_since_update": int(self.time_since_update),
+            "dwell_time": float(round(self.dwell_time, 1)),
+            "direction": str(self.direction),
+            "speed": float(round(self.speed, 1)),
+            "trajectory_length": int(len(self.trajectory)),
+            "first_seen": float(self.first_seen),
+            "last_seen": float(self.last_seen),
         }
 
 
@@ -362,6 +373,7 @@ class ByteTracker:
 
         self.trackers: List[KalmanBoxTracker] = []
         self.frame_count = 0
+        self._next_id = 1
 
         self._stats = {
             "total_tracks": 0,
@@ -369,11 +381,11 @@ class ByteTracker:
             "lost_tracks": 0,
         }
 
-    def update(self, detections: List[Dict]) -> List[Dict]:
+    def update(self, detections: List[Any]) -> List[Dict]:
         """Update tracker with new detections.
         
         Args:
-            detections: list of dicts with keys:
+            detections: list of dicts or Detection objects with keys/attrs:
                 bbox: [x1, y1, x2, y2]
                 class_id: int
                 class_name: str
@@ -384,9 +396,22 @@ class ByteTracker:
         """
         self.frame_count += 1
 
+        # Normalize input detections
+        normalized_dets = []
+        for d in detections:
+            if isinstance(d, dict):
+                normalized_dets.append(d)
+            else:
+                normalized_dets.append({
+                    "bbox": list(d.bbox),
+                    "class_id": getattr(d, "class_id", 0),
+                    "class_name": getattr(d, "class_name", None) or getattr(d, "label", "unknown"),
+                    "confidence": float(d.confidence),
+                })
+
         # Separate high and low confidence detections
-        high_dets = [d for d in detections if d["confidence"] >= self.high_thresh]
-        low_dets = [d for d in detections if self.low_thresh <= d["confidence"] < self.high_thresh]
+        high_dets = [d for d in normalized_dets if d["confidence"] >= self.high_thresh]
+        low_dets = [d for d in normalized_dets if self.low_thresh <= d["confidence"] < self.high_thresh]
         all_dets = high_dets + low_dets
 
         # Predict existing tracks
@@ -408,15 +433,18 @@ class ByteTracker:
                 d.get("class_name", "unknown"), d["confidence"]
             )
 
-        # Create new tracks for unmatched detections
+        # Create new tracks for unmatched detections (only high-confidence detections initiate tracks)
         for det_idx in unmatched_det_idxs:
             d = all_dets[det_idx]
-            trk = KalmanBoxTracker(
-                d["bbox"], d.get("class_id", 0),
-                d.get("class_name", "unknown"), d["confidence"]
-            )
-            self.trackers.append(trk)
-            self._stats["total_tracks"] += 1
+            if d["confidence"] >= self.high_thresh:
+                trk = KalmanBoxTracker(
+                    d["bbox"], d.get("class_id", 0),
+                    d.get("class_name", "unknown"), d["confidence"],
+                    track_id=self._next_id,
+                )
+                self._next_id += 1
+                self.trackers.append(trk)
+                self._stats["total_tracks"] += 1
 
         # Remove deleted tracks
         self.trackers = [t for t in self.trackers if t.state != "deleted"
@@ -470,7 +498,7 @@ class ByteTracker:
         """Reset all tracks."""
         self.trackers.clear()
         self.frame_count = 0
-        KalmanBoxTracker._count = 0
+        self._next_id = 1
         self._stats = {
             "total_tracks": 0,
             "active_tracks": 0,

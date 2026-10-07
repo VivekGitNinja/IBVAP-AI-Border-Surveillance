@@ -73,7 +73,8 @@ class TestSection65BCertificate:
         assert "Section 65B(4)" in cert["legal_statute"]
         assert "Bharatiya Sakshya Adhiniyam" in cert["legal_statute"]
         assert "e3b0c442" in cert["legal_declaration"]
-        assert cert["admissibility_status"] == "VALID & COURT-ADMISSIBLE"
+        assert "Bharatiya Sakshya Adhiniyam, 2023 §63" in cert["admissibility_status"]
+        assert "judicial assessment" in cert["admissibility_status"]
         assert "WORM" in cert["storage_integrity"]
 
 

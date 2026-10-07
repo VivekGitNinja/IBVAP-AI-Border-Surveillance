@@ -12,12 +12,16 @@ from backend.app.db.session import get_db
 from backend.app.models.camera import Camera
 from backend.app.models.incident import Incident
 from backend.app.models.evidence import Evidence
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
 
 @router.get("")
-def get_map_situational_awareness(db: Session = Depends(get_db)) -> Dict[str, Any]:
+def get_map_situational_awareness(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+) -> Dict[str, Any]:
     """Retrieve full geospatial & tactical awareness payload for the border map."""
     cameras = db.query(Camera).filter(Camera.active == True).order_by(Camera.id).all()
     

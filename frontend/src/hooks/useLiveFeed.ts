@@ -4,13 +4,14 @@ import { useTacticalStore } from '../store/useTacticalStore';
 export function useLiveEvents() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<any>(null);
+  const seenEventsRef = useRef<Set<string>>(new Set());
   const setWsStatus = useTacticalStore((s) => s.setWsStatus);
   const addToast = useTacticalStore((s) => s.addToast);
   const fetchInitialData = useTacticalStore((s) => s.fetchInitialData);
   const showLoginModal = useTacticalStore((s) => s.showLoginModal);
 
   const connect = useCallback(() => {
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('ibvap_token') : null;
+    const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('ibvap_token') || localStorage.getItem('token')) : null;
     if (!token) {
       setWsStatus('disconnected');
       return;
@@ -48,6 +49,17 @@ export function useLiveEvents() {
           const m = JSON.parse(e.data);
           if (m.type === 'incident' || m.type === 'incident_created') {
             const inc = m.data || {};
+            const dedupKey = inc.idempotency_key || inc.event_id || inc.incident_code || (inc.id ? `id-${inc.id}` : null);
+            if (dedupKey) {
+              if (seenEventsRef.current.has(dedupKey)) {
+                return;
+              }
+              seenEventsRef.current.add(dedupKey);
+              if (seenEventsRef.current.size > 200) {
+                const first = seenEventsRef.current.values().next().value;
+                seenEventsRef.current.delete(first);
+              }
+            }
             addToast({
               title: `TACTICAL ALERT // ${inc.incident_type || 'BREACH DETECTED'}`,
               subtitle: `Sector ${inc.bop || 'BOP-01'} • Threat: ${(inc.threat_score || 85).toFixed(0)} • ${inc.summary || 'Perimeter activity detected'}`,
@@ -94,7 +106,7 @@ export function useLiveVideoFeed(cameraId: number, onFpsUpdate?: (fps: number) =
   useEffect(() => {
     if (!cameraId) return;
 
-    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('ibvap_token') : null;
+    const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('ibvap_token') || localStorage.getItem('token')) : null;
     if (!token) return;
 
     let isSubscribed = true;

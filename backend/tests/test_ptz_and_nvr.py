@@ -8,32 +8,35 @@ import pytest
 from fastapi.testclient import TestClient
 from backend.app.main import app
 from backend.app.services.live_pipeline import CameraPipeline
+from backend.app.core.security import create_access_token
 
 
 client = TestClient(app)
+_token = create_access_token("operator-1", role="OPERATOR")
+AUTH_HEADERS = {"Authorization": f"Bearer {_token}"}
 
 
 def test_ptz_commands():
     """Verify PTZ direction and zoom adjustments update the camera state."""
     # Pan left
-    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "left", "speed": 0.5})
+    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "left", "speed": 0.5}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "success"
     assert data["ptz_state"]["pan"] < 0
 
     # Tilt up
-    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "up", "speed": 0.5})
+    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "up", "speed": 0.5}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert resp.json()["ptz_state"]["tilt"] > 0
 
     # Zoom in
-    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "zoom_in", "speed": 0.5})
+    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "zoom_in", "speed": 0.5}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     assert resp.json()["ptz_state"]["zoom"] > 1.0
 
     # Home reset
-    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "home"})
+    resp = client.post("/api/v1/cameras/1/ptz", json={"direction": "home"}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     state = resp.json()["ptz_state"]
     assert state["pan"] == 0.0
@@ -44,7 +47,7 @@ def test_ptz_commands():
 
 def test_ptz_presets():
     """Verify PTZ preset listing and navigation."""
-    resp = client.get("/api/v1/cameras/1/ptz/presets")
+    resp = client.get("/api/v1/cameras/1/ptz/presets", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     presets = resp.json()["presets"]
     assert len(presets) >= 4
@@ -53,7 +56,7 @@ def test_ptz_presets():
     assert "HOME" in preset_ids
 
     # Navigate to WATCHTOWER preset
-    resp = client.post("/api/v1/cameras/1/ptz/goto", json={"preset": "WATCHTOWER"})
+    resp = client.post("/api/v1/cameras/1/ptz/goto", json={"preset": "WATCHTOWER"}, headers=AUTH_HEADERS)
     assert resp.status_code == 200
     state = resp.json()["ptz_state"]
     assert state["preset"] == "WATCHTOWER"
@@ -103,3 +106,31 @@ def test_websocket_stream_unauthenticated():
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/live/1"):
             pass
+
+
+def test_camera_power_controls():
+    """Verify camera power ON/OFF and stream start/stop endpoints."""
+    admin_tok = create_access_token("admin-1", role="ADMIN")
+    admin_headers = {"Authorization": f"Bearer {admin_tok}"}
+
+    # 1. Power on camera
+    r_on = client.post("/api/v1/cameras/1/power?power=true", headers=admin_headers)
+    assert r_on.status_code == 200
+    assert r_on.json()["status"] == "started"
+    assert r_on.json()["connected"] is True
+
+    # 2. Power off camera
+    r_off = client.post("/api/v1/cameras/1/power?power=false", headers=admin_headers)
+    assert r_off.status_code == 200
+    assert r_off.json()["status"] == "stopped"
+    assert r_off.json()["disconnected"] is True
+
+    # 3. Stream start
+    r_start = client.post("/api/v1/cameras/1/stream/start", headers=admin_headers)
+    assert r_start.status_code == 200
+    assert r_start.json()["status"] == "started"
+
+    # 4. Stream stop
+    r_stop = client.post("/api/v1/cameras/1/stream/stop", headers=admin_headers)
+    assert r_stop.status_code == 200
+    assert r_stop.json()["status"] == "stopped"

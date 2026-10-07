@@ -97,7 +97,7 @@ export function QRTView({ incidents }: { incidents: Incident[] }) {
       </div>
 
       {feedback && (
-        <div className={`test-feedback ${feedback.includes('🚨') ? 'fail' : 'success'}`} style={{ marginBottom: 16 }}>
+        <div className={`test-feedback ${String(feedback).includes('🚨') ? 'fail' : 'success'}`} style={{ marginBottom: 16 }}>
           {feedback}
         </div>
       )}

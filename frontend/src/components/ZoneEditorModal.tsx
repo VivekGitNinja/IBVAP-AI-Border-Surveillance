@@ -464,9 +464,9 @@ export function ZoneEditorModal({ cameras, initialCameraId, onClose, onSaved }: 
                   padding: '8px 12px',
                   borderRadius: 4,
                   fontSize: 12,
-                  background: feedback.includes('✓') ? 'rgba(0, 255, 157, 0.1)' : 'rgba(255, 42, 85, 0.1)',
-                  border: feedback.includes('✓') ? '1px solid #00ff9d' : '1px solid #ff2a55',
-                  color: feedback.includes('✓') ? '#00ff9d' : '#ff7a8a',
+                  background: String(feedback).includes('✓') ? 'rgba(0, 255, 157, 0.1)' : 'rgba(255, 42, 85, 0.1)',
+                  border: String(feedback).includes('✓') ? '1px solid #00ff9d' : '1px solid #ff2a55',
+                  color: String(feedback).includes('✓') ? '#00ff9d' : '#ff7a8a',
                 }}
               >
                 {feedback}

@@ -13,6 +13,7 @@ from backend.app.db.session import get_db
 from backend.app.models.watchlist import Watchlist
 from backend.app.models.incident import Incident
 from backend.app.services.face import face_service
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -30,6 +31,7 @@ class SuspectIn(BaseModel):
 def list_suspects(
     threat_level: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
 ):
     """List real biometric suspect watchlist from database."""
     subjects = db.query(Watchlist).order_by(desc(Watchlist.created_at)).all()
@@ -53,12 +55,16 @@ def list_suspects(
 
 
 @router.post("/watchlist")
-def enroll_suspect(data: SuspectIn, db: Session = Depends(get_db)):
+def enroll_suspect(
+    data: SuspectIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
+):
     """Enroll a new suspect metadata into the border watchlist."""
     subj = Watchlist(
         name=data.name,
         notes=f"Alias: {data.alias or 'None'} | Agency: {data.agency} | {data.notes or ''}",
-        created_by="operator",
+        created_by=user.get("sub", "operator"),
     )
     db.add(subj)
     db.commit()
@@ -80,7 +86,10 @@ def enroll_suspect(data: SuspectIn, db: Session = Depends(get_db)):
 
 
 @router.get("/matches")
-def list_matches(db: Session = Depends(get_db)):
+def list_matches(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """List real facial recognition candidate matches from incidents."""
     incidents = (
         db.query(Incident)
@@ -115,6 +124,7 @@ def list_matches(db: Session = Depends(get_db)):
 async def verify_probe_face(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
 ):
     """Upload probe face photo and match against enrolled SFace biometric gallery in real time."""
     contents = await file.read()
@@ -210,7 +220,10 @@ async def verify_probe_face(
 
 
 @router.get("/stats")
-def get_frs_stats(db: Session = Depends(get_db)):
+def get_frs_stats(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get FRS biometric pipeline health & real metrics from database."""
     total_enrolled = db.query(Watchlist).count()
     embedded_count = db.query(Watchlist).filter(Watchlist.embedding.isnot(None)).count()

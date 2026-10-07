@@ -1,11 +1,12 @@
 """Health check endpoints."""
 
 import time
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
 from backend.app.db.session import SessionLocal
 from backend.app.core.cache import cached
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -30,8 +31,8 @@ def health_detailed():
         db.execute(text("SELECT 1"))
         db.close()
         checks["database"] = "ok"
-    except Exception as e:
-        checks["database"] = f"error: {str(e)}"
+    except Exception:
+        checks["database"] = "unavailable"
 
     # Redis check (optional)
     try:
@@ -49,7 +50,9 @@ def health_detailed():
 
 @router.get("/status")
 @cached(ttl_seconds=3, key_prefix="system_status")
-def system_status():
+def system_status(
+    user: dict = Depends(require_permission("read")),
+):
     """High-level system status for the dashboard header."""
     db = SessionLocal()
     try:

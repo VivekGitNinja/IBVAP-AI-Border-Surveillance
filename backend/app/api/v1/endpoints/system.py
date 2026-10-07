@@ -10,12 +10,16 @@ from sqlalchemy import text
 
 from backend.app.db.session import get_db
 from backend.app.core.config import settings
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
 
 @router.get("/readiness")
-def get_system_readiness(db: Session = Depends(get_db)) -> Dict[str, Any]:
+def get_system_readiness(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+) -> Dict[str, Any]:
     """Report offline readiness for all AI and tactical components without triggering runtime downloads."""
     components = {}
 

@@ -622,27 +622,32 @@ class VideoAnalysisEngine:
                         confidence=float(det.confidence),
                     )
 
+                    valid_zone_events = [ze for ze in zone_events if ze.get("event_type") in ("zone_intrusion", "direction_violation")]
                     triggered_zone_incident = False
-                    for zevt in zone_events:
-                        if zevt["event_type"] in ("zone_intrusion", "direction_violation"):
-                            triggered_zone_incident = True
-                            incidents_recorded += 1
-                            zid = zevt["zone_id"]
-                            zname = zevt["zone_name"]
-                            zsev = float(zevt.get("severity", 0.5))
-                            threat_score = min(100.0, zsev * 100.0 + (10.0 if is_night else 0.0))
-                            incident_code = f"INC-JOB{job_id}-Z{zid}-T{tid}-{uuid.uuid4().hex[:6].upper()}"
+                    if valid_zone_events:
+                        triggered_zone_incident = True
+                        incidents_recorded += 1
+                        # Select primary (highest severity) zone event to consolidate overlapping zones in this frame
+                        zevt = max(valid_zone_events, key=lambda z: float(z.get("severity", 0.5)))
+                        zid = zevt["zone_id"]
+                        zname = zevt["zone_name"]
+                        zsev = float(zevt.get("severity", 0.5))
+                        threat_score = min(100.0, zsev * 100.0 + (10.0 if is_night else 0.0))
+                        incident_code = f"INC-JOB{job_id}-Z{zid}-T{tid}-{uuid.uuid4().hex[:6].upper()}"
 
-                            # Build annotated evidence snapshot with virtual fence overlay
-                            annotated_frame = frame.copy()
-                            fence.draw_zones_on_frame(
-                                annotated_frame,
-                                triggered_zone_ids={zid},
-                                frame_width=frame_w,
-                                frame_height=frame_h,
-                            )
-                            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                            cv2.putText(
+                        all_zids = {z["zone_id"] for z in valid_zone_events if z.get("zone_id") is not None}
+                        all_znames = [z.get("zone_name", "") for z in valid_zone_events if z.get("zone_name")]
+
+                        # Build annotated evidence snapshot with virtual fence overlay
+                        annotated_frame = frame.copy()
+                        fence.draw_zones_on_frame(
+                            annotated_frame,
+                            triggered_zone_ids=all_zids,
+                            frame_width=frame_w,
+                            frame_height=frame_h,
+                        )
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                        cv2.putText(
                                 annotated_frame,
                                 f"{det.class_name.upper()} #{tid} [{zevt['event_type'].upper()}]",
                                 (x1, max(20, y1 - 8)),
@@ -652,129 +657,130 @@ class VideoAnalysisEngine:
                                 2,
                             )
 
-                            if settings.face_blur:
-                                faces_to_blur = face_service.detect_faces(annotated_frame)
-                                if faces_to_blur:
-                                    annotated_frame = face_service.apply_face_blur(annotated_frame, faces_to_blur)
+                        if settings.face_blur:
+                            faces_to_blur = face_service.detect_faces(annotated_frame)
+                            if faces_to_blur:
+                                annotated_frame = face_service.apply_face_blur(annotated_frame, faces_to_blur)
 
-                            if len(annotated_clip_frames) < 60:
-                                annotated_clip_frames.append(annotated_frame.copy())
+                        if len(annotated_clip_frames) < 60:
+                            annotated_clip_frames.append(annotated_frame.copy())
 
-                            ev_filename = f"ev_job_{job_id}_frame_{frame_index}_{uuid.uuid4().hex[:4]}.jpg"
-                            ev_path = evidence_dir / ev_filename
-                            cv2.imwrite(str(ev_path), annotated_frame)
+                        ev_filename = f"ev_job_{job_id}_frame_{frame_index}_{uuid.uuid4().hex[:4]}.jpg"
+                        ev_path = evidence_dir / ev_filename
+                        cv2.imwrite(str(ev_path), annotated_frame)
 
-                            with open(ev_path, "rb") as ef:
-                                ev_sha256 = hashlib.sha256(ef.read()).hexdigest()
+                        with open(ev_path, "rb") as ef:
+                            ev_sha256 = hashlib.sha256(ef.read()).hexdigest()
 
-                            inc = Incident(
-                                incident_code=incident_code,
-                                title=f"Virtual Fence Alert: {zevt['event_type'].replace('_', ' ').title()} ({zname})",
-                                description=f"Track #{tid} ({det.class_name}) triggered {zevt['event_type']} in {zname} at {timestamp_ms/1000.0:.2f}s.",
-                                severity="CRITICAL" if threat_score >= 85 else ("HIGH" if threat_score >= 70 else "MEDIUM"),
-                                threat_score=threat_score,
-                                confidence=float(det.confidence),
-                                status="OPEN",
-                                camera_id=camera_id,
-                                camera_name=f"Upload Media #{media_id}" if media_id else "Camera Feed",
-                                zone_name=zname,
-                                track_ids=[tid],
-                                job_id=job_id,
-                                media_id=media_id,
-                                reason_codes=[f"ZONE_{zevt['event_type'].upper()}", f"TRACK_{tid}"],
-                                ai_assessment={
-                                    "model": detector.name,
-                                    "frame": frame_index,
-                                    "timestamp_ms": round(timestamp_ms, 2),
-                                    "bbox": [x1, y1, x2, y2],
-                                    "track_id": tid,
-                                    "zone_id": zid,
-                                    "zone_name": zname,
-                                    "direction": zevt.get("direction", "none"),
-                                    "night": is_night,
-                                    "legal_citation": "Bharatiya Sakshya Adhiniyam, 2023 — Section 63",
-                                },
-                            )
-                            db.add(inc)
-                            db.flush()
-                            if primary_incident_id is None:
-                                primary_incident_id = inc.id
+                        inc = Incident(
+                            incident_code=incident_code,
+                            title=f"Virtual Fence Alert: {zevt['event_type'].replace('_', ' ').title()} ({zname})",
+                            description=f"Track #{tid} ({det.class_name}) triggered {zevt['event_type']} in {zname} at {timestamp_ms/1000.0:.2f}s.",
+                            severity="CRITICAL" if threat_score >= 85 else ("HIGH" if threat_score >= 70 else "MEDIUM"),
+                            threat_score=threat_score,
+                            confidence=float(det.confidence),
+                            status="OPEN",
+                            camera_id=camera_id,
+                            camera_name=f"Upload Media #{media_id}" if media_id else "Camera Feed",
+                            zone_name=zname,
+                            track_ids=[tid],
+                            job_id=job_id,
+                            media_id=media_id,
+                            reason_codes=[f"ZONE_{zevt['event_type'].upper()}", f"TRACK_{tid}"],
+                            ai_assessment={
+                                "model": detector.name,
+                                "frame": frame_index,
+                                "timestamp_ms": round(timestamp_ms, 2),
+                                "bbox": [x1, y1, x2, y2],
+                                "track_id": tid,
+                                "zone_id": zid,
+                                "zone_name": zname,
+                                "all_triggered_zones": all_znames,
+                                "direction": zevt.get("direction", "none"),
+                                "night": is_night,
+                                "legal_citation": "Bharatiya Sakshya Adhiniyam, 2023 — Section 63",
+                            },
+                        )
+                        db.add(inc)
+                        db.flush()
+                        if primary_incident_id is None:
+                            primary_incident_id = inc.id
 
-                            ev = Evidence(
-                                incident_id=inc.id,
-                                evidence_type="snapshot",
-                                file_path=str(ev_path),
-                                sha256=ev_sha256,
-                                manifest_path=str(ev_path) + ".json",
-                                manifest_data={"job_id": job_id, "frame": frame_index, "sha256": ev_sha256, "statute": "BSA_2023_SEC_63"},
-                                file_size_bytes=os.path.getsize(ev_path),
-                                threat_score=threat_score,
-                                camera_id=camera_id,
-                                camera_name=inc.camera_name,
-                                detection_metadata={"label": det.class_name, "track_id": tid, "confidence": float(det.confidence), "bbox": [x1, y1, x2, y2]},
-                            )
-                            db.add(ev)
+                        ev = Evidence(
+                            incident_id=inc.id,
+                            evidence_type="snapshot",
+                            file_path=str(ev_path),
+                            sha256=ev_sha256,
+                            manifest_path=str(ev_path) + ".json",
+                            manifest_data={"job_id": job_id, "frame": frame_index, "sha256": ev_sha256, "statute": "BSA_2023_SEC_63"},
+                            file_size_bytes=os.path.getsize(ev_path),
+                            threat_score=threat_score,
+                            camera_id=camera_id,
+                            camera_name=inc.camera_name,
+                            detection_metadata={"label": det.class_name, "track_id": tid, "confidence": float(det.confidence), "bbox": [x1, y1, x2, y2]},
+                        )
+                        db.add(ev)
 
-                            alert = Alert(
-                                incident_id=inc.id,
-                                priority=inc.severity,
-                                status="NEW",
-                                message=f"{inc.severity} incident: {inc.title} (Score: {threat_score:.0f}/100)",
-                            )
-                            db.add(alert)
-                            db.flush()
+                        alert = Alert(
+                            incident_id=inc.id,
+                            priority=inc.severity,
+                            status="NEW",
+                            message=f"{inc.severity} incident: {inc.title} (Score: {threat_score:.0f}/100)",
+                        )
+                        db.add(alert)
+                        db.flush()
 
-                            try:
-                                live_manager._on_event({
-                                    "type": "incident_created",
-                                    "data": {
-                                        "id": inc.id,
-                                        "incident_code": inc.incident_code,
-                                        "incident_type": inc.title,
-                                        "severity": inc.severity,
-                                        "threat_score": inc.threat_score,
-                                        "confidence": inc.confidence,
-                                        "bop": zname or "Perimeter",
-                                        "camera_name": inc.camera_name,
-                                        "summary": inc.description,
-                                    }
-                                })
-                            except Exception:
-                                pass
-
-                            dispatch_incident_webhook(
-                                {
+                        try:
+                            live_manager._on_event({
+                                "type": "incident_created",
+                                "data": {
+                                    "id": inc.id,
                                     "incident_code": inc.incident_code,
-                                    "title": inc.title,
+                                    "incident_type": inc.title,
                                     "severity": inc.severity,
                                     "threat_score": inc.threat_score,
                                     "confidence": inc.confidence,
-                                    "zone_name": inc.zone_name,
-                                    "camera_id": camera_id,
-                                    "track_ids": inc.track_ids or [],
-                                },
-                                {"id": ev.id, "evidence_type": ev.evidence_type, "sha256": ev.sha256}
-                            )
-
-                            broadcast_job_event_sync(job_id, {
-                                "event": "incident_created",
-                                "job_id": job_id,
-                                "incident": {
-                                    "id": inc.id,
-                                    "incident_code": incident_code,
-                                    "title": inc.title,
-                                    "severity": inc.severity,
-                                    "threat_score": inc.threat_score,
-                                    "timestamp_ms": round(timestamp_ms, 2),
-                                    "label": det.class_name,
-                                    "track_id": tid,
-                                    "zone_name": zname,
-                                    "confidence": float(det.confidence),
-                                    "bbox": [x1, y1, x2, y2],
-                                    "evidence_file": ev_filename,
-                                    "sha256": ev_sha256,
+                                    "bop": zname or "Perimeter",
+                                    "camera_name": inc.camera_name,
+                                    "summary": inc.description,
                                 }
                             })
+                        except Exception:
+                            pass
+
+                        dispatch_incident_webhook(
+                            {
+                                "incident_code": inc.incident_code,
+                                "title": inc.title,
+                                "severity": inc.severity,
+                                "threat_score": inc.threat_score,
+                                "confidence": inc.confidence,
+                                "zone_name": inc.zone_name,
+                                "camera_id": camera_id,
+                                "track_ids": inc.track_ids or [],
+                            },
+                            {"id": ev.id, "evidence_type": ev.evidence_type, "sha256": ev.sha256}
+                        )
+
+                        broadcast_job_event_sync(job_id, {
+                            "event": "incident_created",
+                            "job_id": job_id,
+                            "incident": {
+                                "id": inc.id,
+                                "incident_code": incident_code,
+                                "title": inc.title,
+                                "severity": inc.severity,
+                                "threat_score": inc.threat_score,
+                                "timestamp_ms": round(timestamp_ms, 2),
+                                "label": det.class_name,
+                                "track_id": tid,
+                                "zone_name": zname,
+                                "confidence": float(det.confidence),
+                                "bbox": [x1, y1, x2, y2],
+                                "evidence_file": ev_filename,
+                                "sha256": ev_sha256,
+                            }
+                        })
 
                     # If no zone incident triggered, check baseline threat
                     is_threat = (

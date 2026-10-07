@@ -2,12 +2,23 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from backend.app.core.config import settings
 
-connect_args = {
-    "check_same_thread": False,
-    "timeout": 30.0,
-} if settings.database_url.startswith("sqlite") else {}
+engine_kwargs = {
+    "pool_pre_ping": True,
+}
 
-engine = create_engine(settings.database_url, connect_args=connect_args, pool_pre_ping=True)
+if settings.database_url.startswith("sqlite"):
+    engine_kwargs["connect_args"] = {
+        "check_same_thread": False,
+        "timeout": 30.0,
+    }
+else:
+    # Production PostgreSQL connection pool configuration
+    engine_kwargs["pool_size"] = 10
+    engine_kwargs["max_overflow"] = 20
+    engine_kwargs["pool_recycle"] = 1800
+    engine_kwargs["pool_timeout"] = 30.0
+
+engine = create_engine(settings.database_url, **engine_kwargs)
 
 # Enable WAL (Write-Ahead Logging) and busy_timeout for concurrency
 if settings.database_url.startswith("sqlite"):

@@ -5,6 +5,7 @@ import random
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -108,12 +109,15 @@ DISPATCH_LOGS = [
 ]
 
 @router.get("/teams")
-def list_qrt_teams():
+def list_qrt_teams(user: dict = Depends(require_permission("read"))):
     """List all deployed Quick Reaction Team units and real-time operational status."""
     return QRT_TEAMS
 
 @router.post("/dispatch")
-def dispatch_qrt(data: DispatchIn):
+def dispatch_qrt(
+    data: DispatchIn,
+    user: dict = Depends(require_permission("qrt_dispatch")),
+):
     """Scramble and vector a Quick Reaction Team to an incident location."""
     team = next((t for t in QRT_TEAMS if t["id"] == data.team_id), None)
     if not team:
@@ -139,7 +143,10 @@ def dispatch_qrt(data: DispatchIn):
     return {"dispatched": True, "team": team, "eta_minutes": eta, "log": log}
 
 @router.post("/status")
-def update_qrt_status(data: StatusUpdateIn):
+def update_qrt_status(
+    data: StatusUpdateIn,
+    user: dict = Depends(require_permission("qrt_status")),
+):
     """Update mission engagement status of a QRT unit."""
     team = next((t for t in QRT_TEAMS if t["id"] == data.team_id), None)
     if not team:
@@ -155,12 +162,15 @@ def update_qrt_status(data: StatusUpdateIn):
     return team
 
 @router.get("/logs")
-def list_dispatch_logs():
+def list_dispatch_logs(user: dict = Depends(require_permission("read"))):
     """Get historical QRT deployment & engagement ledger."""
     return DISPATCH_LOGS
 
 @router.post("/radio/broadcast")
-def radio_broadcast(data: RadioBroadcastIn):
+def radio_broadcast(
+    data: RadioBroadcastIn,
+    user: dict = Depends(require_permission("qrt_broadcast")),
+):
     """Simulate encrypted tactical VHF radio SITREP broadcast."""
     return {
         "broadcast_id": random.randint(10000, 99999),

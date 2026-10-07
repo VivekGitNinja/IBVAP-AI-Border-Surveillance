@@ -18,12 +18,13 @@ from backend.app.services.demo_scenarios import (
 from backend.app.services.scoring import compute_threat_score
 from backend.app.services.evidence import seal_evidence
 from backend.app.services.timeline import create_timeline_event, append_timeline
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
 
 @router.get("/scenarios")
-def list_scenarios():
+def list_scenarios(user: dict = Depends(require_permission("read"))):
     """List available demo scenarios."""
     return get_available_scenarios()
 
@@ -32,6 +33,7 @@ def list_scenarios():
 def seed_demo(
     scenario: str = "intrusion",
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("run_demo")),
 ):
     """Generate a complete demo incident from a scenario.
 
@@ -213,12 +215,15 @@ def seed_demo(
 
 
 @router.post("/seed/all")
-def seed_all_scenarios(db: Session = Depends(get_db)):
+def seed_all_scenarios(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("run_demo")),
+):
     """Generate one incident for each scenario."""
     scenarios = ["intrusion", "night_movement", "loitering", "vehicle",
                  "abandoned", "multi_camera"]
     results = []
     for s in scenarios:
-        result = seed_demo(s, db)
+        result = seed_demo(s, db, user=user)
         results.append(result)
     return {"incidents_created": len(results), "results": results}

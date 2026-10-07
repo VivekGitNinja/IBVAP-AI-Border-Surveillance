@@ -12,7 +12,7 @@ from backend.app.models.audit import AuditLog
 from backend.app.schemas.common import IncidentOut, IncidentUpdate, AlertOut
 from backend.app.services.audit import log_action
 from backend.app.services.timeline import build_incident_timeline
-from backend.app.api.deps import current_user
+from backend.app.api.deps import current_user, require_permission
 
 router = APIRouter()
 
@@ -23,6 +23,7 @@ def list_incidents(
     severity: str | None = None,
     limit: int = 100,
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
 ):
     """List incidents with optional filters."""
     q = db.query(Incident)
@@ -34,8 +35,12 @@ def list_incidents(
 
 
 @router.get("/alerts", response_model=list[AlertOut])
-def list_alerts(status: str | None = None, limit: int = 100,
-                db: Session = Depends(get_db)):
+def list_alerts(
+    status: str | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """List alerts."""
     q = db.query(Alert)
     if status:
@@ -44,7 +49,11 @@ def list_alerts(status: str | None = None, limit: int = 100,
 
 
 @router.get("/{incident_id}", response_model=IncidentOut)
-def get_incident(incident_id: int, db: Session = Depends(get_db)):
+def get_incident(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get full incident details."""
     x = db.get(Incident, incident_id)
     if not x:
@@ -56,7 +65,7 @@ def get_incident(incident_id: int, db: Session = Depends(get_db)):
 def acknowledge_incident(
     incident_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("acknowledge_incidents")),
 ):
     """Acknowledge an incident (human verification)."""
     x = db.get(Incident, incident_id)
@@ -96,7 +105,7 @@ def acknowledge_incident(
 def escalate_incident(
     incident_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("escalate_incidents")),
 ):
     """Escalate an incident."""
     x = db.get(Incident, incident_id)
@@ -123,33 +132,26 @@ def escalate_incident(
     return x
 
 
+from backend.app.services.feedback import dismiss_incident as execute_dismissal, IncidentDismissIn
+
+
 @router.post("/{incident_id}/dismiss", response_model=IncidentOut)
 def dismiss_incident(
     incident_id: int,
+    payload: Optional[IncidentDismissIn] = None,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("acknowledge_incidents")),
 ):
-    """Dismiss an incident as false positive."""
+    """Dismiss an incident as false positive and register authoritative operator suppression."""
     x = db.get(Incident, incident_id)
     if not x:
         raise HTTPException(404, "Incident not found")
 
-    x.status = "DISMISSED"
-    x.closed_at = datetime.utcnow()
-    x.closed_by = user["sub"]
-
-    timeline = x.timeline or []
-    timeline.append({
-        "timestamp": datetime.utcnow().isoformat(),
-        "event_type": "incident_dismissed",
-        "description": f"Dismissed by {user['sub']}",
-        "source": "operator",
-    })
-    x.timeline = timeline
+    data = payload or IncidentDismissIn(reason="ENVIRONMENT_FALSE_ALARM", duration_seconds=300)
+    execute_dismissal(db, incident_id, data, user["sub"])
 
     log_action(db, user["sub"], user.get("role", ""), "DISMISS",
-               "incident", str(x.id), {"code": x.incident_code})
-    db.commit()
+               "incident", str(x.id), {"code": x.incident_code, "reason": data.reason})
     db.refresh(x)
     return x
 
@@ -158,7 +160,7 @@ def dismiss_incident(
 def close_incident(
     incident_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("acknowledge_incidents")),
 ):
     """Close an incident."""
     x = db.get(Incident, incident_id)
@@ -186,7 +188,11 @@ def close_incident(
 
 
 @router.get("/{incident_id}/timeline")
-def incident_timeline(incident_id: int, db: Session = Depends(get_db)):
+def incident_timeline(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get incident timeline."""
     x = db.get(Incident, incident_id)
     if not x:

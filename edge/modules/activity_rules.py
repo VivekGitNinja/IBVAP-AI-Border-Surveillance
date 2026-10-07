@@ -1,6 +1,12 @@
 """
 Suspicious Activity Detection — Rule Engine
 ============================================
+[DEPRECATED in Phase 4]
+This standalone rule engine is deprecated and must NOT be wired into the live
+incident generation pipeline. Threat scoring and behavioral kinematics are centrally
+unified under `edge/behavior/kinematics.py` (KinematicBehaviorEngine) and
+`backend/app/services/scoring.py` (compute_threat_score).
+This module is preserved solely for reference / backward compatibility.
 
 Consumes track updates and fires explainable alerts based on
 configurable behavioral rules. Every alert includes reasons.

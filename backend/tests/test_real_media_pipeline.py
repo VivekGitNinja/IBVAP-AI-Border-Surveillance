@@ -187,7 +187,7 @@ def test_camera_connection_diagnostic_endpoint():
 
 def test_camera_snapshot_returns_offline_diagnostic_frame():
     """When demo mode is disabled and camera is offline, snapshot returns honest diagnostic offline frame."""
-    resp = client.get("/api/v1/cameras/1/snapshot")
+    resp = client.get("/api/v1/cameras/1/snapshot", headers=_get_auth_headers())
     assert resp.status_code == 200
     assert resp.headers.get("content-type") == "image/jpeg"
     # Verify image is valid JPEG and decodable

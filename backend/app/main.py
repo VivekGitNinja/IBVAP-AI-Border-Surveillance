@@ -5,6 +5,7 @@ FastAPI Application Entry Point
 
 import asyncio
 import time
+from typing import Optional
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -19,7 +20,7 @@ from backend.app.db.session import engine, SessionLocal
 from backend.app.db.base import Base
 from backend.app.db.migrator import run_database_migrations
 from backend.app.api.v1.router import api
-from backend.app.core.config import settings
+from backend.app.core.config import settings, validate_security_configuration
 from backend.app.core.logging import setup_logging, get_logger, set_trace_id, get_trace_id
 from backend.app.core.metrics import (
     record_http_request,
@@ -63,6 +64,9 @@ async def lifespan(app: FastAPI):
     IMPORTANT: Only ONE yield. Everything before yield = startup.
     Everything after yield = shutdown.
     """
+    # ── Fail-Closed Security Configuration Validation (STARTUP) ──
+    validate_security_configuration(settings)
+
     global _event_loop
     _event_loop = asyncio.get_event_loop()
     set_analysis_event_loop(_event_loop)
@@ -111,6 +115,9 @@ async def lifespan(app: FastAPI):
                 record_detection(event.get("type", "detection"), event.get("camera_id", ""))
             except Exception:
                 pass
+            if event.get("type") == "incident_created":
+                # Incident alerts are delivered durably by the Transactional Outbox Dispatcher
+                return
             if _event_loop and _event_loop.is_running():
                 asyncio.run_coroutine_threadsafe(
                     broadcast_event(event["type"], event),
@@ -118,12 +125,32 @@ async def lifespan(app: FastAPI):
                 )
         live_manager.add_event_listener(on_live_event)
 
-        # ── Start live pipelines for persistent RTSP streams (STARTUP) ──
-        # Exclude host USB webcams so user camera does not turn on automatically at boot
+        # ── Wire Outbox Dispatcher → WebSocket broadcast (STARTUP) ──
+        from backend.app.services.outbox_dispatcher import global_outbox_dispatcher
+
+        def on_outbox_event(payload):
+            if _event_loop and _event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    broadcast_event(payload.get("event_type", "incident_created"), payload),
+                    _event_loop,
+                )
+
+        global_outbox_dispatcher.set_event_broadcaster(on_outbox_event)
+        global_outbox_dispatcher.start()
+
+        # ── Start Spool Replay Worker for offline incident recovery (STARTUP) ──
+        from backend.app.services.spool_replay import global_spool_replay_worker
+        global_spool_replay_worker.start()
+
+        # ── Start Camera Health Persistence Worker (STARTUP - GAP-P0-01 Phase 5) ──
+        from backend.app.services.camera_health_worker import global_health_worker
+        global_health_worker.start()
+
+        # ── Start live pipelines for active configured cameras (STARTUP) ──
         try:
             cameras = db.query(Camera).filter(
                 Camera.stream_url.notlike("demo://%"),
-                Camera.stream_url.notlike(""),
+                Camera.stream_url != "",
                 Camera.active == True,
             ).all()
             for cam in cameras:
@@ -133,8 +160,9 @@ async def lifespan(app: FastAPI):
                     camera_name=cam.name,
                     bop=cam.bop,
                 )
+                logger.info(f"Started live pipeline for camera {cam.id}: {cam.stream_url}")
         except Exception as e:
-            print(f"Pipeline startup warning: {e}")
+            logger.warning(f"Error auto-starting camera pipelines: {e}")
     finally:
         db.close()
 
@@ -143,6 +171,9 @@ async def lifespan(app: FastAPI):
     # ══════ everything below runs at shutdown ══════
 
     # Cleanup
+    global_health_worker.stop(timeout=5.0)
+    global_spool_replay_worker.stop(timeout=5.0)
+    global_outbox_dispatcher.stop(timeout=5.0)
     live_manager.stop_all()
     engine.dispose()
 
@@ -243,19 +274,103 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                     "duration_ms": round(elapsed_ms, 2),
                 },
             )
-            raise
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": "Internal server error. Please provide the trace_id to system administrators.",
+                    "trace_id": trace_id,
+                },
+                headers={
+                    "X-Trace-ID": trace_id,
+                    "X-Process-Time-Ms": f"{elapsed_ms:.1f}",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Frame-Options": "DENY",
+                },
+            )
 
 
 app.add_middleware(ObservabilityMiddleware)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    Fail-closed global exception handler preventing information disclosure.
+    Masks database connection strings, stack traces, and internal errors.
+    Returns sanitized JSON payload containing a distributed trace ID.
+    """
+    from fastapi import HTTPException
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+    from fastapi.responses import JSONResponse
+
+    if isinstance(exc, (HTTPException, StarletteHTTPException)):
+        from fastapi.exception_handlers import http_exception_handler
+        return await http_exception_handler(request, exc)
+
+    trace_id = get_trace_id() or f"ibvap-{uuid.uuid4().hex[:12]}"
+    logger.error(
+        f"Unhandled exception caught by global handler on {request.method} {request.url.path}: {str(exc)}",
+        exc_info=True,
+        extra={"trace_id": trace_id, "path": request.url.path, "method": request.method},
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error. Please provide the trace_id to system administrators.",
+            "trace_id": trace_id,
+        },
+        headers={
+            "X-Trace-ID": trace_id,
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+        },
+    )
+
+
+def _is_test_environment() -> bool:
+    """Return True only if running within an authorized automated test environment."""
+    import sys, os
+    if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+        return True
+    if os.environ.get("TESTING", "").lower() in ("1", "true", "yes"):
+        return True
+    return False
+
+
 # Prometheus metrics exposition endpoint
 @app.get("/metrics", include_in_schema=False)
-def prometheus_metrics():
+def prometheus_metrics(request: Request):
     """
     Expose RFC-compliant Prometheus/OpenMetrics exposition format (0.0.4)
     telemetry counters, gauges, and latency histograms for Prometheus scrapers.
+    Restricts external network access: requires management network (127.0.0.1/::1)
+    or authenticated bearer token.
     """
+    is_prod = settings.environment.lower() in ("production", "prod")
+    client_ip = request.client.host if request.client else "unknown"
+
+    # In production, testclient is NEVER trusted; only explicit loopback IP literals are allowed.
+    # In non-production environments, testclient is admitted strictly when running in an authorized test runner.
+    if is_prod:
+        is_management = client_ip in ("127.0.0.1", "::1")
+    else:
+        allowed_ips = {"127.0.0.1", "::1", "localhost"}
+        if _is_test_environment():
+            allowed_ips.add("testclient")
+        is_management = client_ip in allowed_ips
+
+    if not is_management:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Metrics exposition requires management network or valid bearer token.",
+            )
+        token = auth_header.split(" ", 1)[1]
+        decode_access_token(token)
+
     from fastapi.responses import Response
     return Response(
         content=generate_metrics_text(),
@@ -285,8 +400,8 @@ def root(request: Request):
 # Initialize evidence directory
 _clips_dir = Path(settings.evidence_dir) / "clips"
 _clips_dir.mkdir(parents=True, exist_ok=True)
-if Path(settings.evidence_dir).is_dir():
-    app.mount("/data/evidence", StaticFiles(directory=settings.evidence_dir), name="evidence_static")
+# Static mount removed per Gate 2 security hardening (P0-03).
+# All evidence access is strictly routed through authenticated /api/v1/evidence/vault/...
 
 # Serve frontend static files
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
@@ -298,8 +413,8 @@ if _frontend_dist.is_dir():
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        # Never swallow API routes or metrics with SPA index.html
-        if full_path.startswith("api/") or full_path == "api" or full_path.startswith("ws/") or full_path == "metrics":
+        # Never swallow API routes, metrics, or protected data routes with SPA index.html
+        if full_path.startswith("api/") or full_path == "api" or full_path.startswith("ws/") or full_path == "metrics" or full_path.startswith("data/") or full_path == "data":
             raise HTTPException(status_code=404, detail=f"Endpoint not found: /{full_path}")
 
         # Strict path traversal prevention
@@ -324,23 +439,68 @@ if _frontend_dist.is_dir():
         return FileResponse(_frontend_dist / "index.html")
 
 
+async def _authenticate_websocket(
+    websocket: WebSocket,
+    required_permission: str = "read",
+    expected_scope: str = "",
+) -> Optional[dict]:
+    """
+    Authenticate and authorize WebSocket connections fail-closed.
+    Validates token from query parameters or Authorization header.
+    Enforces active user state in DB, checks role capabilities, and verifies resource scope.
+    Closes with 4001 (Unauthorized) or 4003 (Forbidden) if invalid.
+    """
+    token = websocket.query_params.get("token")
+    if not token:
+        auth_header = websocket.headers.get("authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+
+    if not token:
+        await websocket.close(code=4001, reason="Authentication required")
+        return None
+
+    try:
+        from backend.app.core.security import verify_streaming_ticket
+        payload = verify_streaming_ticket(token, expected_scope=expected_scope)
+    except Exception:
+        try:
+            payload = decode_access_token(token)
+        except jwt.ExpiredSignatureError:
+            await websocket.close(code=4001, reason="Expired token")
+            return None
+        except Exception:
+            await websocket.close(code=4001, reason="Invalid token")
+            return None
+
+    role = payload.get("role", "OPERATOR")
+    db = SessionLocal()
+    try:
+        from backend.app.models.user import User
+        from backend.app.core.security import role_has_permission
+        username = payload.get("sub", "")
+        db_user = db.query(User).filter(User.username == username).first()
+        if db_user:
+            if not db_user.active:
+                await websocket.close(code=4001, reason="User account is inactive")
+                return None
+            role = db_user.role
+    finally:
+        db.close()
+
+    if not role_has_permission(role, required_permission):
+        await websocket.close(code=4003, reason=f"Forbidden: Missing required capability '{required_permission}'")
+        return None
+
+    return {"sub": username, "role": role}
+
+
 @app.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket):
-    """WebSocket endpoint for real-time events. Requires valid JWT token."""
-    token = websocket.query_params.get("token")
-    if settings.require_auth:
-        if not token:
-            await websocket.close(code=1008, reason="Authentication required")
-            return
-        try:
-            decode_access_token(token)
-        except jwt.ExpiredSignatureError:
-            if settings.environment != "development":
-                await websocket.close(code=1008, reason="Expired token")
-                return
-        except Exception:
-            await websocket.close(code=1008, reason="Invalid token")
-            return
+    """WebSocket endpoint for real-time events. Requires valid JWT token with read capability."""
+    user_data = await _authenticate_websocket(websocket, required_permission="read", expected_scope="ws:events")
+    if not user_data:
+        return
 
     await websocket.accept()
     _active_connections.append(websocket)
@@ -366,14 +526,11 @@ async def websocket_analysis_job(websocket: WebSocket, job_id: int):
     """
     Real-time WebSocket connection streaming progress, detections,
     and incidents for a specific computer vision analysis job.
+    Requires valid JWT token with read capability.
     """
-    token = websocket.query_params.get("token")
-    if settings.require_auth and token:
-        try:
-            decode_access_token(token)
-        except Exception:
-            await websocket.close(code=1008, reason="Invalid token")
-            return
+    user_data = await _authenticate_websocket(websocket, required_permission="read", expected_scope=f"ws:analysis:{job_id}")
+    if not user_data:
+        return
 
     await websocket.accept()
     register_job_subscriber(job_id, websocket)
@@ -415,22 +572,11 @@ async def websocket_live_stream(websocket: WebSocket, camera_id: int):
     High-performance binary WebSocket live video stream.
     Streams JPEG frames directly as binary packets, completely bypassing browser
     HTTP/1.1 6-connection limits for unlimited concurrent camera grids.
-    Requires valid JWT token.
+    Requires valid JWT token with read capability.
     """
-    token = websocket.query_params.get("token")
-    if settings.require_auth:
-        if not token:
-            await websocket.close(code=1008, reason="Authentication required")
-            return
-        try:
-            decode_access_token(token)
-        except jwt.ExpiredSignatureError:
-            if settings.environment != "development":
-                await websocket.close(code=1008, reason="Expired token")
-                return
-        except Exception:
-            await websocket.close(code=1008, reason="Invalid token")
-            return
+    user_data = await _authenticate_websocket(websocket, required_permission="read", expected_scope=f"ws:live:{camera_id}")
+    if not user_data:
+        return
 
     await websocket.accept()
     try:
@@ -467,12 +613,29 @@ async def websocket_live_stream(websocket: WebSocket, camera_id: int):
 
         _prev_frame_id = None  # dedup identical ring-buffer reads
         _cached_jpeg = None
+        _loop_iter = 0
 
         while True:
+            _loop_iter += 1
+            if _loop_iter % 20 == 0:
+                # Refresh camera active/status state from DB
+                db_re = SessionLocal()
+                try:
+                    c_fresh = db_re.get(Camera, camera_id)
+                    if c_fresh:
+                        cam.active = c_fresh.active
+                        cam.status = c_fresh.status
+                        cam.stream_url = c_fresh.stream_url
+                        url = c_fresh.stream_url or ""
+                except Exception:
+                    pass
+                finally:
+                    db_re.close()
+
             if not cam.active or cam.status == "OFFLINE" or url.startswith("demo://") or not url:
                 offline_bytes = get_cached_offline_jpeg(cam)
                 await websocket.send_bytes(offline_bytes)
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(1.5)
                 continue
 
             # Fast path: grab latest frame from live pipeline ring buffer
@@ -487,12 +650,9 @@ async def websocket_live_stream(websocket: WebSocket, camera_id: int):
                 await asyncio.sleep(0.5)
                 continue
 
-            # Deduplicate: skip encode if same frame object (ring buffer not advanced)
-            cur_id = id(raw)
-            if cur_id != _prev_frame_id or _cached_jpeg is None:
-                _prev_frame_id = cur_id
-                loop = asyncio.get_event_loop()
-                _cached_jpeg = await loop.run_in_executor(_encode_pool, _encode_frame, raw)
+            # Downscale & encode frame
+            loop = asyncio.get_event_loop()
+            _cached_jpeg = await loop.run_in_executor(_encode_pool, _encode_frame, raw)
 
             if _cached_jpeg:
                 await websocket.send_bytes(_cached_jpeg)

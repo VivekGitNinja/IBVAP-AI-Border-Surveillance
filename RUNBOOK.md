@@ -327,7 +327,7 @@ Full interactive API docs: `http://localhost:8001/docs`
 
 ## 11. Evidence & Reports
 
-All evidence is SHA-256 sealed per **Bharatiya Sakshya Adhiniyam 2023 (Section 63)**.
+All evidence is SHA-256 sealed with technical controls aligned with **Bharatiya Sakshya Adhiniyam 2023 (Section 63)**. Per-case statutory certificate generation remains an operational/legal prerequisite.
 
 ```bash
 # Verify evidence seal for evidence ID 1
@@ -612,14 +612,14 @@ Run the automated system doctor:
 
 ---
 
-### Step 9: BSA 2023 §63 Forensic Evidence & Court-Admissible Report
+### Step 9: BSA 2023 §63 Forensic Evidence & Electronic Record Report
 1. Navigate to **Evidence Locker** (`/?view=evidence`).
 2. Click on an evidence snapshot or incident clip.
 3. Click **Verify Hash**:
    - Re-reads file from disk, computes SHA-256, and compares with manifest hash.
-   - *Expected:* Green validation banner `match: true` confirming cryptographic seal integrity under Bharatiya Sakshya Adhiniyam, 2023 §63.
+   - *Expected:* Green validation banner `match: true` confirming cryptographic seal integrity under technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 §63.
 4. On Video Studio, click **Export PDF (BSA §63)**:
-   - Downloads official court-admissible forensic certificate.
+   - Downloads forensic evidence certificate (Implemented technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements. Per-case statutory certificate generation remains an operational/legal prerequisite).
    - Verify containing statutory legal citation, digital hash seal, and officer declaration.
 5. Click **Export JSON** for automated C2 / Inter-Agency data sharing.
 

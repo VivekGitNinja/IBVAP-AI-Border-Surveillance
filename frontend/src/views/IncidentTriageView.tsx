@@ -54,20 +54,20 @@ export function IncidentTriageView({ incidents, openInc }: { incidents: Incident
           {list.map((i) => (
             <div key={i.id} className="incident-card" onClick={() => openInc(i.id)}>
               <div className="ic-header">
-                <span className={`sev-badge sev-${i.severity.toLowerCase()}`}>{i.severity}</span>
-                <span className="ic-code">{i.incident_code}</span>
-                <span className="ic-score">THREAT SCORE: {i.threat_score.toFixed(0)}/100</span>
-                <span className={`ic-status ${i.status.toLowerCase()}`}>{i.status}</span>
+                <span className={`sev-badge sev-${(i.severity || 'LOW').toLowerCase()}`}>{i.severity || 'LOW'}</span>
+                <span className="ic-code">{i.incident_code || `INC-${i.id}`}</span>
+                <span className="ic-score">THREAT SCORE: {(i.threat_score ?? 0).toFixed(0)}/100</span>
+                <span className={`ic-status ${(i.status || 'OPEN').toLowerCase()}`}>{i.status || 'OPEN'}</span>
               </div>
-              <div className="ic-title">{i.title}</div>
+              <div className="ic-title">{i.title || 'Perimeter Alert'}</div>
               <div className="ic-meta">
                 {i.camera_name || 'BOP Sector'} • {i.zone_name || 'Perimeter Zone'} • {fmtTime(i.created_at)}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
                 <div className="ic-reasons">
-                  {i.reason_codes.slice(0, 4).map((r) => (
+                  {(i.reason_codes || []).slice(0, 4).map((r) => (
                     <span key={r} className="reason-tag">
-                      {r.split(':')[0].trim()}
+                      {String(r || '').split(':')[0].trim()}
                     </span>
                   ))}
                 </div>
@@ -146,7 +146,7 @@ function CertificateModal({ cert, onClose }: { cert: any; onClose: () => void })
         >
           <div>
             <div style={{ fontSize: 10, color: '#a855f7', letterSpacing: 2, fontFamily: 'var(--font-mono)' }}>
-              GOVERNMENT OF INDIA • MINISTRY OF HOME AFFAIRS • COURT-ADMISSIBLE EVIDENCE
+              GOVERNMENT OF INDIA • MINISTRY OF HOME AFFAIRS • SECTION 63 BSA ELECTRONIC RECORD
             </div>
             <h2 style={{ margin: '4px 0', fontSize: 20, color: '#fff', letterSpacing: 1 }}>
               {cert.certificate_id}
@@ -342,9 +342,9 @@ export function IncidentDetailView({
             RESTRICTED // LAW ENFORCEMENT & BORDER DEFENSE INTELLIGENCE
           </div>
           <h1 style={{ margin: '4px 0', fontSize: 24, letterSpacing: 1 }}>
-            INCIDENT DOSSIER: {i.incident_code}
+            INCIDENT DOSSIER: {i.incident_code || `INC-${i.id}`}
           </h1>
-          <span className={`sev-badge sev-${i.severity.toLowerCase()} large`}>{i.severity} THREAT</span>
+          <span className={`sev-badge sev-${(i.severity || 'LOW').toLowerCase()} large`}>{i.severity || 'LOW'} THREAT</span>
         </div>
         <div className="detail-actions">
           <button
@@ -409,11 +409,11 @@ export function IncidentDetailView({
           <div className="detail-left">
             {/* Key Metric Info */}
             <div className="info-card">
-              <div className="info-row"><label>Threat Score</label><span className="threat-score">{i.threat_score.toFixed(0)}<small>/100</small></span></div>
-              <div className="info-row"><label>AI Confidence</label><span>{(i.confidence * 100).toFixed(0)}%</span></div>
+              <div className="info-row"><label>Threat Score</label><span className="threat-score">{(i.threat_score ?? 0).toFixed(0)}<small>/100</small></span></div>
+              <div className="info-row"><label>AI Confidence</label><span>{(((i.confidence ?? 0)) * 100).toFixed(0)}%</span></div>
               <div className="info-row"><label>Surveillance Post</label><span>{i.camera_name || 'BOP-01 Gate Post'}</span></div>
               <div className="info-row"><label>Perimeter Zone</label><span>{i.zone_name || 'Restricted Zero-Line'}</span></div>
-              <div className="info-row"><label>Status</label><span className={`ic-status ${i.status.toLowerCase()}`}>{i.status}</span></div>
+              <div className="info-row"><label>Status</label><span className={`ic-status ${(i.status || 'OPEN').toLowerCase()}`}>{i.status || 'OPEN'}</span></div>
               <div className="info-row"><label>Sensor Timestamp</label><span>{fmtTime(i.created_at)}</span></div>
             </div>
 
@@ -427,7 +427,7 @@ export function IncidentDetailView({
             <div className="info-card">
               <h3>Rule & AI Threat Attribution</h3>
               <div className="reason-list">
-                {i.reason_codes.map((r, idx) => (
+                {(i.reason_codes || []).map((r, idx) => (
                   <div key={idx} className="reason-item">
                     <span className="reason-num">{idx + 1}</span>
                     <span>{r}</span>
@@ -590,7 +590,7 @@ export function IncidentDetailView({
         </div>
       )}
 
-      {/* Official Court-Admissible Section 63 BSA & Section 65B Certificate Modal */}
+      {/* Official Section 63 BSA & Section 65B Electronic Evidence Certificate Modal */}
       {showLegalCert && (
         <LegalCertificateModal
           cert={{

@@ -12,8 +12,13 @@ import { telemetry } from './utils/telemetry';
 
 const BASE = getApiBase();
 
+export function getAuthToken(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage.getItem('ibvap_token') || localStorage.getItem('token');
+}
+
 async function request<T>(path: string, opts?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('ibvap_token');
+  const token = getAuthToken();
   const traceId = telemetry.generateTraceId();
   const headers: Record<string, string> = { ...(opts?.headers as Record<string, string> || {}) };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -72,7 +77,11 @@ export const api = {
   createCamera: (d: any) => post<any>('/cameras', d),
   updateCamera: (id: number, d: any) => request<any>(`/cameras/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }),
   deleteCamera: (id: number) => request<any>(`/cameras/${id}`, { method: 'DELETE' }),
+  connectCamera: (id: number) => post<any>(`/cameras/${id}/connect`),
   disconnectCamera: (id: number) => post<any>(`/cameras/${id}/disconnect`),
+  startCameraStream: (id: number) => post<any>(`/cameras/${id}/stream/start`),
+  stopCameraStream: (id: number) => post<any>(`/cameras/${id}/stream/stop`),
+  toggleCameraPower: (id: number, power: boolean) => post<any>(`/cameras/${id}/power?power=${power}`),
   cameraHealth: (id: number) => get<any[]>(`/cameras/${id}/health`),
   cameraBrands: () => get<any[]>('/cameras/brands'),
   networkInfo: () => get<any>('/cameras/network-info'),
@@ -124,6 +133,8 @@ export const api = {
 
   // Audit
   audit: (limit?: number) => get<any[]>(`/audit?limit=${limit || 100}`),
+  auditLogs: (limit?: number) => get<any[]>(`/audit?limit=${limit || 100}`),
+  verifyAudit: () => get<any>('/audit/verify'),
   verifyAuditChain: () => get<any>('/audit/verify'),
 
   // Sync
@@ -147,7 +158,7 @@ export const api = {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('bop', bop);
-    const token = localStorage.getItem('ibvap_token');
+    const token = getAuthToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${BASE}/anpr/scan-file`, {
@@ -173,7 +184,7 @@ export const api = {
   frsVerifyProbe: async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const token = localStorage.getItem('ibvap_token');
+    const token = getAuthToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${BASE}/frs/verify-probe`, {
@@ -195,7 +206,7 @@ export const api = {
   importSample: async (filename: string) => {
     const formData = new FormData();
     formData.append('filename', filename);
-    const token = localStorage.getItem('ibvap_token');
+    const token = getAuthToken();
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
     const res = await fetch(`${BASE}/media/samples/import`, {
@@ -222,7 +233,7 @@ export const api = {
 
   // Real Video Upload & Media Assets
   uploadMedia: async (file: File) => {
-    const token = localStorage.getItem('ibvap_token');
+    const token = getAuthToken();
     const formData = new FormData();
     formData.append('file', file);
     const headers: Record<string, string> = {};
@@ -278,7 +289,7 @@ export const api = {
   // Face Watchlist & Intelligence (Task 3.2 & 5.3)
   watchlist: () => get<any[]>('/watchlist'),
   enrollWatchlist: async (name: string, notes: string, file: File) => {
-    const token = localStorage.getItem('ibvap_token');
+    const token = getAuthToken();
     const formData = new FormData();
     formData.append('name', name);
     formData.append('notes', notes);

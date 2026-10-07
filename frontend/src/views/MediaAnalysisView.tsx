@@ -176,7 +176,8 @@ export function MediaAnalysisView() {
     // Connect WebSocket
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
-    const wsUrl = `${proto}//${host}/ws/analysis/${activeJobId}`;
+    const token = typeof localStorage !== "undefined" ? (localStorage.getItem("token") || localStorage.getItem("ibvap_token") || "") : "";
+    const wsUrl = `${proto}//${host}/ws/analysis/${activeJobId}?token=${encodeURIComponent(token)}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -386,28 +387,36 @@ export function MediaAnalysisView() {
         ctx.moveTo(bx + bw - cLen, by + bh); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw, by + bh - cLen);
         ctx.stroke();
 
-        // Label pill
-        const tagText = `${label.toUpperCase()} ${tid ? `[${tid}] ` : ""}${(conf * 100).toFixed(0)}%`;
-        ctx.font = "bold 10px monospace";
+        // Label pill with collision avoidance and edge clamping
+        const tagText = `${(label || "OBJECT").toUpperCase()} ${tid ? `[${tid}] ` : ""}${((conf || 0) * 100).toFixed(0)}%`;
+        ctx.font = "bold 11px monospace";
         const tagWidth = ctx.measureText(tagText).width;
-        ctx.fillStyle = "rgba(4, 11, 20, 0.88)";
-        ctx.fillRect(bx, Math.max(0, by - 17), tagWidth + 8, 16);
+        const pillHeight = 20;
+        const pillY = by >= pillHeight + 2 ? by - pillHeight : by + bh;
+        const pillX = Math.max(2, Math.min(bx, canvas.width - tagWidth - 14));
+
+        ctx.fillStyle = "rgba(4, 11, 20, 0.92)";
+        ctx.fillRect(pillX, pillY, tagWidth + 12, pillHeight);
+        ctx.strokeStyle = boxColor;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(pillX, pillY, tagWidth + 12, pillHeight);
         ctx.fillStyle = boxColor;
-        ctx.fillText(tagText, bx + 4, Math.max(11, by - 5));
+        ctx.fillText(tagText, pillX + 6, pillY + 14);
 
         // License plate badge
         if (plateText) {
           const pText = `🚗 IND ${plateText}`;
-          ctx.font = "bold 10px monospace";
+          ctx.font = "bold 11px monospace";
           const pWidth = ctx.measureText(pText).width;
-          const py = by + bh + 3;
-          ctx.fillStyle = "rgba(0, 0, 0, 0.92)";
-          ctx.fillRect(bx, py, pWidth + 10, 18);
+          const py = by + bh + 4;
+          const px = Math.max(2, Math.min(bx, canvas.width - pWidth - 16));
+          ctx.fillStyle = "rgba(4, 11, 20, 0.94)";
+          ctx.fillRect(px, py, pWidth + 12, 20);
           ctx.strokeStyle = "#00ff9d";
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(bx, py, pWidth + 10, 18);
+          ctx.lineWidth = 1;
+          ctx.strokeRect(px, py, pWidth + 12, 20);
           ctx.fillStyle = "#ffffff";
-          ctx.fillText(pText, bx + 5, py + 13);
+          ctx.fillText(pText, px + 6, py + 14);
         }
         ctx.restore();
       });
@@ -1241,14 +1250,14 @@ export function MediaAnalysisView() {
                           <div style={{ borderRadius: 4, overflow: "hidden", marginBottom: 6, background: "#000" }}>
                             <video
                               controls
-                              src={`/data/evidence/clips/${fname}`}
+                              src={`/api/v1/evidence/vault/clips/${fname}?token=${encodeURIComponent((typeof localStorage !== "undefined" ? (localStorage.getItem("ibvap_token") || localStorage.getItem("token")) : "") || "")}`}
                               style={{ width: "100%", maxHeight: 140, display: "block" }}
                             />
                           </div>
                         ) : (
                           <div style={{ borderRadius: 4, overflow: "hidden", marginBottom: 6, background: "#000" }}>
                             <img
-                              src={`/data/evidence/clips/${fname}`}
+                              src={`/api/v1/evidence/vault/clips/${fname}?token=${encodeURIComponent((typeof localStorage !== "undefined" ? (localStorage.getItem("ibvap_token") || localStorage.getItem("token")) : "") || "")}`}
                               alt="Evidence snapshot"
                               style={{ width: "100%", height: 100, objectFit: "cover" }}
                               onError={(e) => {
@@ -1616,7 +1625,7 @@ export function MediaAnalysisView() {
                 ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {zones.map((z: any) => {
-                      const isArmed = selectedZoneIds.includes(z.id);
+                      const isArmed = Array.isArray(selectedZoneIds) && selectedZoneIds.includes(z.id);
                       return (
                         <button
                           key={z.id}

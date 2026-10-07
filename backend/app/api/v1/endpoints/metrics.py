@@ -11,12 +11,16 @@ from backend.app.models.alert import Alert
 from backend.app.models.detection import Detection
 from backend.app.models.track import Track
 from backend.app.models.sync_queue import SyncQueue
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
 
 @router.get("")
-def get_metrics(db: Session = Depends(get_db)):
+def get_metrics(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get system-wide metrics for observability."""
     cameras = db.query(Camera).all()
     cameras_online = sum(1 for c in cameras if c.status == "ONLINE")

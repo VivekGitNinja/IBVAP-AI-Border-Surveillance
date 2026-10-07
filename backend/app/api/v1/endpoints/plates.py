@@ -9,6 +9,7 @@ from sqlalchemy import desc
 
 from backend.app.db.session import get_db
 from backend.app.models.plate_read import PlateRead
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -36,6 +37,7 @@ def search_plates(
     camera_id: Optional[int] = Query(None, description="Filter by camera ID"),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
 ):
     """Query real license plate reads extracted from video analysis or cameras."""
     query = db.query(PlateRead)

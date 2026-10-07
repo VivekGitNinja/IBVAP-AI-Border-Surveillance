@@ -139,7 +139,7 @@ export function ANPRView() {
       </div>
 
       {feedback && (
-        <div className={`test-feedback ${feedback.includes('🚨') ? 'fail' : 'success'}`} style={{ marginBottom: 16 }}>
+        <div className={`test-feedback ${String(feedback).includes('🚨') ? 'fail' : 'success'}`} style={{ marginBottom: 16 }}>
           {feedback}
         </div>
       )}
@@ -234,8 +234,9 @@ export function ANPRView() {
               </div>
             ) : (
               plates.map((p) => {
-                const isFlagged = p.status.includes('FLAGGED') || p.status.includes('STOLEN') || p.status.includes('MATCH');
-                const isMilitary = p.status.includes('MILITARY');
+                const stat = String(p.status || '').toUpperCase();
+                const isFlagged = stat.includes('FLAGGED') || stat.includes('STOLEN') || stat.includes('MATCH');
+                const isMilitary = stat.includes('MILITARY');
                 return (
                   <div
                     key={p.id}

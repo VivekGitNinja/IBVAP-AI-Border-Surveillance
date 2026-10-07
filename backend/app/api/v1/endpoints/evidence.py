@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -12,16 +12,121 @@ from backend.app.models.evidence import Evidence
 from backend.app.services.evidence import verify_manifest, verify_evidence_chain
 from backend.app.services.audit import log_action
 from backend.app.schemas.common import EvidenceOut, EvidenceVerification
-from backend.app.api.deps import current_user
+from backend.app.api.deps import current_user, require_permission
 
 router = APIRouter()
+
+
+@router.get("/vault/{path:path}")
+def stream_vault_evidence(
+    path: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
+    """
+    Securely stream or download forensic surveillance artifacts from the encrypted vault.
+    Enforces authentication, Section 63 BSA audit trail logging, and strict path traversal guards.
+    """
+    import mimetypes
+    import urllib.parse
+    from backend.app.services.evidence import compute_file_hash
+
+    # 1. Null-byte rejection
+    if "\x00" in path or "%00" in path:
+        raise HTTPException(status_code=400, detail="Invalid character in path: null byte detected")
+
+    unquoted = urllib.parse.unquote(path)
+    if "\x00" in unquoted:
+        raise HTTPException(status_code=400, detail="Invalid character in path: null byte detected")
+
+    # 2. Strict traversal sequence check
+    norm_parts = unquoted.replace("\\", "/").split("/")
+    if ".." in norm_parts or any(p.strip() == ".." for p in norm_parts):
+        raise HTTPException(status_code=403, detail="Access denied: Path traversal detected")
+
+    # 3. Clean leading prefixes if passed (e.g. data/evidence/)
+    clean_path = unquoted.lstrip("/")
+    if clean_path.startswith("data/evidence/"):
+        clean_path = clean_path[len("data/evidence/"):]
+    elif clean_path.startswith("data/"):
+        clean_path = clean_path[len("data/"):]
+
+    vault_root = Path(settings.evidence_dir).resolve()
+    target_path = (vault_root / clean_path).resolve()
+
+    # Fallback search in clips/ subdirectory if directly missing
+    if not target_path.exists():
+        fallback_clip = (vault_root / "clips" / clean_path).resolve()
+        if fallback_clip.exists():
+            target_path = fallback_clip
+
+    # 4. Traversal check against resolved vault_root
+    try:
+        if not target_path.is_relative_to(vault_root):
+            raise HTTPException(status_code=403, detail="Access denied: Path traversal outside evidence vault")
+    except (ValueError, AttributeError):
+        if not str(target_path).startswith(str(vault_root)):
+            raise HTTPException(status_code=403, detail="Access denied: Path traversal outside evidence vault")
+
+    if not target_path.is_file():
+        raise HTTPException(status_code=404, detail="Evidence file not found in vault")
+
+    # 5. Determine content type
+    ext = target_path.suffix.lower()
+    mime_map = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".json": "application/json",
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+    }
+    media_type = mime_map.get(ext) or mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
+
+    # 6. Cryptographic digest computation for BSA §63 audit trail
+    file_sha256 = compute_file_hash(str(target_path)) or ""
+    client_ip = request.client.host if (request and request.client) else "unknown"
+
+    log_action(
+        db=db,
+        actor=user.get("sub", "system"),
+        actor_role=user.get("role", "OPERATOR"),
+        action="READ_EVIDENCE_VAULT",
+        target_type="evidence",
+        target_id=unquoted,
+        details={
+            "file_path": str(target_path),
+            "sha256": file_sha256,
+            "statutory_compliance": "Bharatiya Sakshya Adhiniyam, 2023 §63",
+            "client_ip": client_ip,
+            "timestamp": datetime.utcnow().isoformat(),
+        },
+        ip_address=client_ip,
+    )
+
+    return FileResponse(
+        path=str(target_path),
+        media_type=media_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "X-Evidence-SHA256": file_sha256,
+            "X-Statutory-Compliance": "Bharatiya Sakshya Adhiniyam, 2023 Section 63",
+        },
+    )
 
 
 @router.get("/{incident_id}", response_model=list[EvidenceOut])
 def list_evidence(
     incident_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("read")),
 ):
     """Get all evidence for an incident (authenticated)."""
     return (
@@ -37,7 +142,7 @@ def list_evidence(
 def verify_evidence(
     evidence_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("read")),
 ):
     """Verify integrity of an evidence record against disk file hash (authenticated)."""
     import os
@@ -82,7 +187,7 @@ def verify_evidence(
 def verify_evidence_chain_endpoint(
     incident_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("read")),
 ):
     """Verify hash-chain integrity of all evidence for an incident (authenticated)."""
     evidence = (
@@ -106,9 +211,9 @@ def verify_evidence_chain_endpoint(
 def get_section_65b_certificate(
     evidence_id: int,
     db: Session = Depends(get_db),
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("export_evidence")),
 ):
-    """Generate Section 65B Indian Evidence Act Court-Admissibility Certificate (authenticated)."""
+    """Generate Section 63 BSA electronic evidence certificate (authenticated). Implemented technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements. Per-case statutory certificate generation remains an operational/legal prerequisite."""
     from backend.app.services.evidence import generate_section_65b_certificate
     from backend.app.models.incident import Incident
 
@@ -132,7 +237,7 @@ def get_section_65b_certificate(
 def get_evidence_clip(
     incident_id: int,
     filename: str,
-    user: dict = Depends(current_user),
+    user: dict = Depends(require_permission("read")),
 ):
     """Securely stream or download an evidence video clip with strict authentication and traversal guard."""
     safe_filename = Path(filename).name

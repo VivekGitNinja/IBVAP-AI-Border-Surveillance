@@ -31,6 +31,7 @@ from backend.app.models.incident import Incident
 from backend.app.models.evidence import Evidence
 from backend.app.models.plate_read import PlateRead
 from backend.app.services.video_analysis import VideoAnalysisEngine
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -73,7 +74,11 @@ class AnalysisJobOut(BaseModel):
 
 
 @router.post("/jobs", response_model=AnalysisJobOut, status_code=status.HTTP_201_CREATED)
-def create_analysis_job(data: CreateAnalysisJobIn, db: Session = Depends(get_db)):
+def create_analysis_job(
+    data: CreateAnalysisJobIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
+):
     """
     Create and launch an asynchronous computer vision analysis job for an uploaded video, RTSP, or camera.
     """
@@ -114,7 +119,7 @@ def create_analysis_job(data: CreateAnalysisJobIn, db: Session = Depends(get_db)
             "enable_night_mode": bool(data.enable_night_mode),
             "enable_face": bool(data.enable_face),
         },
-        created_by="operator",
+        created_by=user.get("sub", "operator"),
     )
     db.add(job)
     db.commit()
@@ -128,13 +133,20 @@ def create_analysis_job(data: CreateAnalysisJobIn, db: Session = Depends(get_db)
 
 
 @router.get("/jobs", response_model=List[AnalysisJobOut])
-def list_analysis_jobs(db: Session = Depends(get_db)):
+def list_analysis_jobs(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """List all computer vision analysis jobs."""
     return db.query(AnalysisJob).order_by(AnalysisJob.created_at.desc()).all()
 
 
 @router.get("/jobs/{job_id}", response_model=AnalysisJobOut)
-def get_analysis_job(job_id: int, db: Session = Depends(get_db)):
+def get_analysis_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Retrieve current status and progress of an analysis job."""
     job = db.get(AnalysisJob, job_id)
     if not job:
@@ -143,7 +155,11 @@ def get_analysis_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/jobs/{job_id}/results")
-def get_analysis_results(job_id: int, db: Session = Depends(get_db)):
+def get_analysis_results(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Retrieve full analysis report including detections, incidents, and forensic evidence."""
     job = db.get(AnalysisJob, job_id)
     if not job:
@@ -272,7 +288,11 @@ def get_analysis_results(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/jobs/{job_id}/tracks")
-def get_analysis_job_tracks(job_id: int, db: Session = Depends(get_db)):
+def get_analysis_job_tracks(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """
     Retrieve summarized multi-object tracks for an analysis job.
     Returns persistent track_id, class, first/last frame, downsampled normalized path,
@@ -430,11 +450,23 @@ def get_analysis_job_tracks(job_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/jobs/{job_id}/cancel")
-def cancel_analysis_job(job_id: int, db: Session = Depends(get_db)):
+def cancel_analysis_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
+):
     """Cancel an ongoing analysis job."""
     job = db.get(AnalysisJob, job_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis job not found")
+
+    user_role = user.get("role", "OPERATOR")
+    user_sub = user.get("sub", "")
+    if user_role not in ("ADMIN", "COMMANDER") and job.created_by and job.created_by != user_sub:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Operators may only cancel their own analysis jobs.",
+        )
 
     cancelled = VideoAnalysisEngine.cancel_job(job_id)
     if not cancelled and job.status == "processing":
@@ -449,6 +481,7 @@ def export_analysis_job_report(
     job_id: int,
     format: str = Query("json", pattern="^(json|pdf)$"),
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
 ):
     """Export comprehensive forensic & tactical report for an analysis job in JSON or PDF format."""
     from fastapi.responses import Response
@@ -486,6 +519,7 @@ class LiveWindowRequest(BaseModel):
 def run_live_window_analysis(
     req: LiveWindowRequest,
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
 ):
     """
     Execute a bounded live computer vision analysis window directly on a live camera / RTSP stream.

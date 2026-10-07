@@ -18,10 +18,13 @@ from backend.app.models.media_asset import MediaAsset  # noqa: F401
 from backend.app.models.analysis_job import AnalysisJob  # noqa: F401
 from backend.app.models.plate_read import PlateRead  # noqa: F401
 from backend.app.models.watchlist import Watchlist  # noqa: F401
+from backend.app.models.suppression import OperatorSuppression  # noqa: F401
+from backend.app.models.outbox import IncidentOutboxEvent  # noqa: F401
 
 __all__ = [
     "Base", "User", "Camera", "CameraHealth", "Zone", "Detection", "Track",
     "Event", "Incident", "Alert", "Evidence", "AuditLog", "SyncQueue",
     "SystemConfig", "MediaAsset", "AnalysisJob", "PlateRead", "Watchlist",
+    "OperatorSuppression", "IncidentOutboxEvent",
 ]
 

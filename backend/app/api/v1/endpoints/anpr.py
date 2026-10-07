@@ -15,6 +15,7 @@ from backend.app.models.alert import Alert
 from backend.app.services.anpr import anpr_engine
 from backend.app.services.c2 import dispatch_incident_webhook
 from backend.app.services.live_pipeline import live_manager
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -160,6 +161,7 @@ def list_scanned_plates(
     bop: Optional[str] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
 ):
     """List scanned vehicle license plates with OCR metadata from real database."""
     query = db.query(PlateRead).order_by(PlateRead.created_at.desc())
@@ -198,6 +200,7 @@ async def scan_plate_file(
     file: UploadFile = File(...),
     bop: str = Form("BOP-01 Road Checkpost"),
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
 ):
     """Upload vehicle image and perform real-time ANPR localization and OCR."""
     contents = await file.read()
@@ -322,7 +325,11 @@ async def scan_plate_file(
 
 
 @router.post("/scan")
-def scan_plate(data: PlateIn, db: Session = Depends(get_db)):
+def scan_plate(
+    data: PlateIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
+):
     """Record an ANPR scan, persist in database, and check against stolen watchlist."""
     plate_clean = data.plate_number.strip().upper()
     clean_no_space = plate_clean.replace(" ", "").upper()
@@ -420,12 +427,15 @@ def scan_plate(data: PlateIn, db: Session = Depends(get_db)):
     }
 
 @router.get("/watchlist")
-def get_anpr_watchlist():
+def get_anpr_watchlist(user: dict = Depends(require_permission("read"))):
     """Get active blacklisted/stolen vehicle watchlist."""
     return WATCHLIST_DB
 
 @router.post("/watchlist")
-def add_to_watchlist(data: WatchlistPlateIn):
+def add_to_watchlist(
+    data: WatchlistPlateIn,
+    user: dict = Depends(require_permission("write")),
+):
     """Add a license plate to the border intelligence watchlist."""
     record = {
         "id": len(WATCHLIST_DB) + 1,
@@ -440,14 +450,14 @@ def add_to_watchlist(data: WatchlistPlateIn):
     return record
 
 @router.post("/barrier/toggle")
-def toggle_barrier():
+def toggle_barrier(user: dict = Depends(require_permission("barrier_control"))):
     """Remotely engage or release checkpost vehicle intercept barrier."""
     BARRIER_STATE["barrier_raised"] = not BARRIER_STATE["barrier_raised"]
     BARRIER_STATE["status"] = "BARRIER_OPEN" if BARRIER_STATE["barrier_raised"] else "BARRIER_ENGAGED"
     return BARRIER_STATE
 
 @router.get("/stats")
-def get_anpr_stats():
+def get_anpr_stats(user: dict = Depends(require_permission("read"))):
     """Get checkpost ANPR telemetry."""
     total = len(SCANNED_PLATES)
     flagged = sum(1 for p in SCANNED_PLATES if "flag" in p["status"].lower() or "stolen" in p["status"].lower())

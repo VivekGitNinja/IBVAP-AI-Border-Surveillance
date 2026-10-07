@@ -15,6 +15,7 @@ from backend.app.db.session import get_db
 from backend.app.models.watchlist import Watchlist
 from backend.app.models.incident import Incident
 from backend.app.services.face import face_service, STORAGE_FACES_DIR
+from backend.app.api.deps import require_permission
 
 router = APIRouter()
 
@@ -33,7 +34,10 @@ class WatchlistOut(BaseModel):
 
 
 @router.get("", response_model=List[WatchlistOut])
-def list_watchlist(db: Session = Depends(get_db)):
+def list_watchlist(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """List all enrolled watchlist targets."""
     subjects = db.query(Watchlist).order_by(desc(Watchlist.created_at)).all()
     results = []
@@ -58,6 +62,7 @@ async def enroll_target(
     notes: str = Form(""),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("write")),
 ):
     """Enroll a new facial recognition suspect/target into the watchlist."""
     os.makedirs(STORAGE_FACES_DIR, exist_ok=True)
@@ -90,7 +95,7 @@ async def enroll_target(
         face_image_path=target_path,
         embedding=embedding,
         notes=notes.strip(),
-        created_by="operator",
+        created_by=user.get("sub", "operator"),
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
@@ -111,7 +116,11 @@ async def enroll_target(
 
 
 @router.delete("/{subject_id}")
-def delete_target(subject_id: int, db: Session = Depends(get_db)):
+def delete_target(
+    subject_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("delete")),
+):
     """Delete an enrolled subject from the watchlist."""
     subject = db.query(Watchlist).filter(Watchlist.id == subject_id).first()
     if not subject:
@@ -129,7 +138,11 @@ def delete_target(subject_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{subject_id}/image")
-def get_target_image(subject_id: int, db: Session = Depends(get_db)):
+def get_target_image(
+    subject_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Serve the enrolled face crop for authenticated users."""
     subject = db.query(Watchlist).filter(Watchlist.id == subject_id).first()
     if not subject or not subject.face_image_path:
@@ -142,7 +155,11 @@ def get_target_image(subject_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/matches/recent")
-def list_recent_matches(limit: int = 20, db: Session = Depends(get_db)):
+def list_recent_matches(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get recent facial watchlist match incidents."""
     matches = (
         db.query(Incident)

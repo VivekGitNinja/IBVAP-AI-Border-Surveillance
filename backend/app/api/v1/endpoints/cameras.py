@@ -14,8 +14,10 @@ from typing import List, Optional, Dict, Any
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
+import ipaddress
+import urllib.parse
 import numpy as np
-from fastapi import APIRouter, Depends, HTTPException, Body, Response, Request
+from fastapi import APIRouter, Depends, HTTPException, Body, Response, Request, status, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -27,7 +29,7 @@ from backend.app.models.camera import Camera
 from backend.app.models.camera_health import CameraHealth
 from backend.app.schemas.common import CameraIn, CameraOut, CameraHealthOut, CameraPatchIn
 from backend.app.services.audit import log_action
-from backend.app.api.deps import current_user
+from backend.app.api.deps import current_user, require_permission
 
 logger = get_logger("cameras")
 router = APIRouter()
@@ -254,6 +256,89 @@ class DiscoveredCamera(BaseModel):
     is_gateway: bool = False
 
 
+# Authorized surveillance camera streaming & management ports
+ALLOWED_CAMERA_PORTS = {80, 443, 554, 4747, 8000, 8080, 8554, 8899}
+
+
+def validate_target_ip_and_port(ip_or_host: str, port: Optional[int] = None) -> str:
+    """
+    SSRF Protection Guard:
+    1. Rejects dangerous hostnames and prohibited targets.
+    2. Pins DNS resolution to prevent DNS rebinding attacks.
+    3. Strictly blocks loopback (127.0.0.0/8, ::1).
+    4. Strictly blocks link-local (169.254.0.0/16, fe80::/10).
+    5. Strictly blocks cloud metadata (169.254.169.254).
+    6. Strictly blocks reserved, broadcast, and multicast addresses.
+    7. Verifies port against ALLOWED_CAMERA_PORTS.
+    Returns validated, resolved IP address string.
+    """
+    if not ip_or_host or not ip_or_host.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSRF validation failed: IP address or hostname is required.",
+        )
+
+    clean_host = ip_or_host.strip().lower()
+
+    if clean_host in ("localhost", "metadata.google.internal", "instance-data"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSRF protection: Target host '{clean_host}' is prohibited.",
+        )
+
+    if port is not None:
+        if port not in ALLOWED_CAMERA_PORTS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"SSRF protection: Port {port} is not an authorized surveillance streaming port.",
+            )
+
+    try:
+        addr_info = socket.getaddrinfo(clean_host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        if not addr_info:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"SSRF validation failed: Unable to resolve hostname '{clean_host}'.",
+            )
+        resolved_ip = addr_info[0][4][0]
+    except socket.gaierror:
+        resolved_ip = clean_host
+
+    try:
+        ip_obj = ipaddress.ip_address(resolved_ip)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSRF validation failed: Invalid IP address '{resolved_ip}'.",
+        )
+
+    if ip_obj.is_loopback:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSRF protection: Loopback addresses ({resolved_ip}) are strictly prohibited.",
+        )
+
+    if ip_obj.is_link_local:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSRF protection: Link-local addresses ({resolved_ip}) are strictly prohibited.",
+        )
+
+    if str(ip_obj) == "169.254.169.254":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SSRF protection: Cloud metadata endpoints are strictly prohibited.",
+        )
+
+    if ip_obj.is_unspecified or ip_obj.is_reserved or ip_obj.is_multicast:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"SSRF protection: Address {resolved_ip} is reserved, broadcast, or multicast.",
+        )
+
+    return str(ip_obj)
+
+
 class SmartProbeRequest(BaseModel):
     ip: str
     username: str = "admin"
@@ -292,13 +377,13 @@ class StreamTestResult(BaseModel):
 
 
 @router.get("/brands", response_model=List[BrandPreset])
-def get_camera_brands():
+def get_camera_brands(user: dict = Depends(require_permission("read"))):
     """Get supported camera brands with RTSP URL templates and setup tips."""
     return CAMERA_BRANDS
 
 
 @router.get("/network-info")
-def get_network_info():
+def get_network_info(user: dict = Depends(require_permission("read"))):
     """Auto-detect current host LAN IP, subnet base, and active network gateway."""
     local_ip, subnet_base = get_active_lan_subnet()
     return {
@@ -310,7 +395,10 @@ def get_network_info():
 
 
 @router.post("/discover", response_model=List[DiscoveredCamera])
-def discover_cameras(req: DiscoverRequest):
+def discover_cameras(
+    req: DiscoverRequest,
+    current_user: dict = Depends(require_permission("manage_config")),
+):
     """
     Ultra-Fast Deep Network Camera & Device Discovery:
     1. Auto-resolves active subnet base if empty or 'auto'.
@@ -323,6 +411,20 @@ def discover_cameras(req: DiscoverRequest):
     local_ip, auto_subnet = get_active_lan_subnet()
     if req.ip_range and req.ip_range.strip() and req.ip_range.strip().lower() not in ("auto", ""):
         base = req.ip_range.strip().rstrip(".")
+        if base.startswith("127.") or base == "127" or base.startswith("169.254"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SSRF protection: Subnet range cannot target loopback or link-local networks."
+            )
+        try:
+            test_ip = ipaddress.ip_address(f"{base}.1" if base.count(".") == 2 else base)
+            if test_ip.is_loopback or test_ip.is_link_local or str(test_ip) == "169.254.169.254":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="SSRF protection: Subnet range cannot target loopback, link-local, or cloud metadata."
+                )
+        except ValueError:
+            pass
     else:
         base = auto_subnet
 
@@ -526,7 +628,10 @@ def discover_cameras(req: DiscoverRequest):
 
 
 @router.post("/smart-probe", response_model=SmartProbeResult)
-def smart_probe_stream(req: SmartProbeRequest):
+def smart_probe_stream(
+    req: SmartProbeRequest,
+    user: dict = Depends(require_permission("manage_config")),
+):
     """
     Strix-Style Smart IP Camera Stream Finder:
     Iterates through the top 15 most common RTSP and HTTP stream URL patterns
@@ -536,7 +641,19 @@ def smart_probe_stream(req: SmartProbeRequest):
     """
     user = req.username or "admin"
     pwd = req.password or "admin123"
-    ip = req.ip.strip()
+    raw_ip = req.ip.strip()
+
+    # Validate requested ports against authorized surveillance camera ports
+    if req.ports:
+        for p in req.ports:
+            if p not in ALLOWED_CAMERA_PORTS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"SSRF protection: Port {p} is not an authorized surveillance streaming port.",
+                )
+
+    # Validate IP address against SSRF vectors
+    ip = validate_target_ip_and_port(raw_ip)
 
     # Candidate URL patterns
     patterns = [
@@ -636,7 +753,11 @@ def smart_probe_stream(req: SmartProbeRequest):
 
 
 @router.post("/phone-stream/{camera_id}/frame")
-def upload_phone_camera_frame(camera_id: str, payload: dict = Body(...)):
+def upload_phone_camera_frame(
+    camera_id: str,
+    payload: dict = Body(...),
+    current_user: dict = Depends(require_permission("write")),
+):
     """
     Accepts live JPEG image frames transmitted from any smartphone browser.
     Turns any phone into a live border surveillance node with zero software installation.
@@ -663,7 +784,10 @@ def upload_phone_camera_frame(camera_id: str, payload: dict = Body(...)):
 
 
 @router.get("/phone-stream/{camera_id}/frame")
-def get_phone_camera_frame(camera_id: str):
+def get_phone_camera_frame(
+    camera_id: str,
+    current_user: dict = Depends(require_permission("read")),
+):
     """Retrieve the latest live JPEG frame for a phone camera."""
     frame = get_phone_frame(camera_id)
     if frame is None:
@@ -677,7 +801,10 @@ def get_phone_camera_frame(camera_id: str):
 
 
 @router.post("/test-stream", response_model=StreamTestResult)
-def test_stream(req: StreamTestRequest):
+def test_stream(
+    req: StreamTestRequest,
+    user: dict = Depends(require_permission("manage_config")),
+):
     """
     Test a camera stream with a non-blocking timeout safeguard.
     Captures 5 frames to verify connection before saving.
@@ -709,6 +836,47 @@ def test_stream(req: StreamTestRequest):
                 fps=15.0,
                 frame_count=1,
             )
+
+    # SSRF & protocol validation for non-phone streams
+    is_local_device = (
+        url.startswith("usb://")
+        or url.startswith("camera://")
+        or url.startswith("webcam://")
+        or url.startswith("demo://")
+        or url.isdigit()
+    )
+    if not is_local_device:
+        if url.startswith("file://"):
+            file_path = Path(url.replace("file://", "")).resolve()
+            allowed_roots = [
+                Path(settings.evidence_dir).resolve(),
+                Path(settings.upload_dir).resolve(),
+                Path("samples").resolve(),
+            ]
+            if not any(file_path.is_relative_to(r) for r in allowed_roots):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: file:// URL outside allowed storage directories.",
+                )
+        else:
+            parsed = urllib.parse.urlsplit(url)
+            if parsed.scheme not in ("rtsp", "http", "https"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"SSRF protection: Unsupported streaming scheme '{parsed.scheme}'.",
+                )
+            port = parsed.port
+            if port is None:
+                port = 554 if parsed.scheme == "rtsp" else (443 if parsed.scheme == "https" else 80)
+            validated_ip = validate_target_ip_and_port(parsed.hostname or "", port)
+            # Pin URL to validated IP address to prevent DNS rebinding TOCTOU attacks
+            if parsed.hostname and validated_ip != parsed.hostname:
+                userinfo = ""
+                if "@" in parsed.netloc:
+                    userinfo = parsed.netloc.split("@")[0] + "@"
+                port_str = f":{port}" if parsed.port is not None else ""
+                new_netloc = f"{userinfo}{validated_ip}{port_str}"
+                url = urllib.parse.urlunsplit((parsed.scheme, new_netloc, parsed.path, parsed.query, parsed.fragment))
 
     def probe():
         try:
@@ -774,14 +942,21 @@ def test_stream(req: StreamTestRequest):
 
 
 @router.get("", response_model=list[CameraOut])
-def list_cameras(db: Session = Depends(get_db)):
-    """List all active cameras."""
-    return db.query(Camera).filter(Camera.active == True).order_by(Camera.id).all()
+def list_cameras(
+    include_inactive: bool = Query(True, description="Include standby/inactive cameras"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
+    """List cameras. Returns all configured camera assets by default so offline/standby nodes can be powered on."""
+    query = db.query(Camera)
+    if not include_inactive:
+        query = query.filter(Camera.active == True)
+    return query.order_by(Camera.id).all()
 
 
 @router.post("", response_model=CameraOut)
 def add_camera(data: CameraIn, db: Session = Depends(get_db),
-               user: dict = Depends(current_user)):
+               user: dict = Depends(require_permission("manage_cameras"))):
     """Add a new camera and start live pipeline if stream is available."""
     c = Camera(**data.model_dump())
     db.add(c)
@@ -809,7 +984,11 @@ def add_camera(data: CameraIn, db: Session = Depends(get_db),
 
 
 @router.get("/{camera_id}", response_model=CameraOut)
-def get_camera(camera_id: int, db: Session = Depends(get_db)):
+def get_camera(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get camera details."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -819,7 +998,7 @@ def get_camera(camera_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{camera_id}", response_model=CameraOut)
 def update_camera(camera_id: int, data: CameraIn, db: Session = Depends(get_db),
-                  user: dict = Depends(current_user)):
+                  user: dict = Depends(require_permission("manage_cameras"))):
     """Update a camera."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -837,7 +1016,7 @@ def update_camera(camera_id: int, data: CameraIn, db: Session = Depends(get_db),
 
 @router.patch("/{camera_id}", response_model=CameraOut)
 def patch_camera(camera_id: int, data: CameraPatchIn, db: Session = Depends(get_db),
-                 user: dict = Depends(current_user)):
+                 user: dict = Depends(require_permission("manage_cameras"))):
     """Partially update a camera (e.g. coordinates, sector, name)."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -856,7 +1035,7 @@ def patch_camera(camera_id: int, data: CameraPatchIn, db: Session = Depends(get_
 
 @router.post("/{camera_id}/connect")
 def connect_camera(camera_id: int, db: Session = Depends(get_db),
-                   user: dict = Depends(current_user)):
+                   user: dict = Depends(require_permission("manage_cameras"))):
     """Connect camera, start stream capture and start live AI detection pipeline."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -887,7 +1066,7 @@ def connect_camera(camera_id: int, db: Session = Depends(get_db),
 
 @router.post("/{camera_id}/disconnect")
 def disconnect_camera(camera_id: int, db: Session = Depends(get_db),
-                      user: dict = Depends(current_user)):
+                      user: dict = Depends(require_permission("manage_cameras"))):
     """Disconnect hardware camera, release webcam device, power down stream."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -912,7 +1091,7 @@ def disconnect_camera(camera_id: int, db: Session = Depends(get_db),
 
 @router.delete("/{camera_id}")
 def delete_camera(camera_id: int, db: Session = Depends(get_db),
-                  user: dict = Depends(current_user)):
+                  user: dict = Depends(require_permission("delete"))):
     """Deactivate and disconnect a camera, releasing hardware immediately."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -936,7 +1115,11 @@ def delete_camera(camera_id: int, db: Session = Depends(get_db),
 
 
 @router.post("/{camera_id}/heartbeat", response_model=CameraOut)
-def heartbeat(camera_id: int, db: Session = Depends(get_db)):
+def heartbeat(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("manage_cameras")),
+):
     """Record a camera heartbeat."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -951,7 +1134,8 @@ def heartbeat(camera_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{camera_id}/health", response_model=list[CameraHealthOut])
 def camera_health_history(camera_id: int, limit: int = 20,
-                          db: Session = Depends(get_db)):
+                          db: Session = Depends(get_db),
+                          user: dict = Depends(require_permission("read"))):
     """Get camera health time-series."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -1030,7 +1214,11 @@ def get_cached_offline_jpeg(camera: Camera) -> bytes:
 
 
 @router.post("/{camera_id}/test")
-def test_camera_connection(camera_id: int, db: Session = Depends(get_db)):
+def test_camera_connection(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("camera_control")),
+):
     """Test whether a real camera/RTSP URL or device index can be opened."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -1204,50 +1392,41 @@ def _generate_tactical_frame(camera: Camera, frame_num: int = 0) -> "np.ndarray"
 
 
 @router.post("/{camera_id}/ptz")
-def execute_ptz(camera_id: int, cmd: PTZCommand, db: Session = Depends(get_db)):
-    """Execute an ONVIF Pan-Tilt-Zoom command on a camera."""
+def execute_ptz(
+    camera_id: int,
+    cmd: PTZCommand,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("camera_control")),
+):
+    """Execute an ONVIF or digital Pan-Tilt-Zoom command on a camera."""
     c = db.get(Camera, camera_id)
     if not c:
         raise HTTPException(404, "Camera not found")
 
-    state = _PTZ_STATE.setdefault(camera_id, {"pan": 0.0, "tilt": 0.0, "zoom": 1.0, "preset": "HOME"})
-    step = max(2.0, min(25.0, cmd.speed * 20.0))
+    from edge.adapters import create_camera_adapter, PTZCommand as AdapterPTZCmd
+    adapter = create_camera_adapter(camera_id=camera_id, stream_url=c.stream_url or "")
+    if camera_id in _PTZ_STATE:
+        adapter._current_ptz_state.update(_PTZ_STATE[camera_id])
 
-    d = cmd.direction.lower().strip()
-    if d == "left":
-        state["pan"] = max(-100.0, state["pan"] - step)
-        state["preset"] = "MANUAL"
-    elif d == "right":
-        state["pan"] = min(100.0, state["pan"] + step)
-        state["preset"] = "MANUAL"
-    elif d == "up":
-        state["tilt"] = min(45.0, state["tilt"] + step)
-        state["preset"] = "MANUAL"
-    elif d == "down":
-        state["tilt"] = max(-45.0, state["tilt"] - step)
-        state["preset"] = "MANUAL"
-    elif d == "zoom_in":
-        state["zoom"] = min(4.0, state["zoom"] + 0.25 * cmd.speed)
-        state["preset"] = "MANUAL"
-    elif d == "zoom_out":
-        state["zoom"] = max(1.0, state["zoom"] - 0.25 * cmd.speed)
-        state["preset"] = "MANUAL"
-    elif d in ("home", "reset"):
-        state["pan"] = 0.0
-        state["tilt"] = 0.0
-        state["zoom"] = 1.0
-        state["preset"] = "HOME"
+    adapter_cmd = AdapterPTZCmd(direction=cmd.direction, speed=cmd.speed)
+    adapter_res = adapter.execute_ptz(adapter_cmd)
+    _PTZ_STATE[camera_id] = adapter_res["ptz_state"]
 
     return {
         "status": "success",
         "camera_id": camera_id,
-        "command": d,
-        "ptz_state": state
+        "command": cmd.direction.lower().strip(),
+        "is_hardware": adapter_res.get("is_hardware", False),
+        "ptz_state": _PTZ_STATE[camera_id],
     }
 
 
 @router.get("/{camera_id}/ptz/presets")
-def get_ptz_presets(camera_id: int, db: Session = Depends(get_db)):
+def get_ptz_presets(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("read")),
+):
     """Get tactical PTZ preset positions for a camera."""
     c = db.get(Camera, camera_id)
     if not c:
@@ -1261,68 +1440,107 @@ def get_ptz_presets(camera_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{camera_id}/ptz/goto")
-def goto_ptz_preset(camera_id: int, cmd: PTZPresetCommand, db: Session = Depends(get_db)):
+def goto_ptz_preset(
+    camera_id: int,
+    cmd: PTZPresetCommand,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("camera_control")),
+):
     """Move PTZ camera to a tactical preset position."""
     c = db.get(Camera, camera_id)
     if not c:
         raise HTTPException(404, "Camera not found")
 
-    target = None
-    for p in _PTZ_PRESETS:
-        if p["id"].lower() == cmd.preset.lower() or p["name"].lower() == cmd.preset.lower():
-            target = p
-            break
+    from edge.adapters import create_camera_adapter
+    adapter = create_camera_adapter(camera_id=camera_id, stream_url=c.stream_url or "")
+    if camera_id in _PTZ_STATE:
+        adapter._current_ptz_state.update(_PTZ_STATE[camera_id])
 
-    if not target:
+    try:
+        adapter_res = adapter.goto_preset(cmd.preset)
+    except ValueError:
         raise HTTPException(400, f"Preset '{cmd.preset}' not recognized")
 
-    state = _PTZ_STATE.setdefault(camera_id, {"pan": 0.0, "tilt": 0.0, "zoom": 1.0, "preset": "HOME"})
-    state["pan"] = target["pan"]
-    state["tilt"] = target["tilt"]
-    state["zoom"] = target["zoom"]
-    state["preset"] = target["id"]
+    _PTZ_STATE[camera_id] = adapter_res["ptz_state"]
 
     return {
         "status": "success",
         "camera_id": camera_id,
-        "preset": target["name"],
-        "ptz_state": state
+        "preset": adapter_res["preset"],
+        "is_hardware": adapter_res.get("is_hardware", False),
+        "ptz_state": _PTZ_STATE[camera_id],
     }
 
 
 @router.post("/{camera_id}/stream/start")
-def start_stream(camera_id: int, db: Session = Depends(get_db)):
+def start_stream(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_cameras")),
+):
     """
     Start/prepare live stream endpoint for a camera.
-    Serves MJPEG at /api/v1/cameras/{id}/stream
+    Powers on camera hardware, activates live AI pipeline, and serves MJPEG/WS.
     """
     c = db.get(Camera, camera_id)
     if not c:
         raise HTTPException(404, "Camera not found")
 
+    res = connect_camera(camera_id=camera_id, db=db, user=user)
     return {
         "status": "started",
         "camera_id": camera_id,
         "stream_endpoint": f"/api/v1/cameras/{camera_id}/stream",
         "snapshot_endpoint": f"/api/v1/cameras/{camera_id}/snapshot",
+        "connected": res.get("connected", True),
     }
 
 
 @router.post("/{camera_id}/stream/stop")
-def stop_stream(camera_id: int):
-    """Stop live stream for a camera."""
-    return {"status": "stopped", "camera_id": camera_id}
+def stop_stream(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_cameras")),
+):
+    """Stop live stream for a camera, power off hardware sensor, and release device."""
+    c = db.get(Camera, camera_id)
+    if not c:
+        raise HTTPException(404, "Camera not found")
+
+    res = disconnect_camera(camera_id=camera_id, db=db, user=user)
+    return {
+        "status": "stopped",
+        "camera_id": camera_id,
+        "disconnected": res.get("disconnected", True),
+    }
+
+
+@router.post("/{camera_id}/power")
+def toggle_camera_power(
+    camera_id: int,
+    power: bool = Query(..., description="True to power on, False to power off"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_cameras")),
+):
+    """Explicit hardware power control: turn camera sensor ON or OFF."""
+    if power:
+        return start_stream(camera_id=camera_id, db=db, user=user)
+    else:
+        return stop_stream(camera_id=camera_id, db=db, user=user)
 
 
 @router.get("/pipeline/status")
-def pipeline_status():
+def pipeline_status(user: dict = Depends(require_permission("read"))):
     """Get status of all live pipelines."""
     from backend.app.services.live_pipeline import live_manager
     return live_manager.get_status()
 
 
 @router.post("/pipeline/start-all")
-def start_all_pipelines(db: Session = Depends(get_db)):
+def start_all_pipelines(
+    db: Session = Depends(get_db),
+    user: dict = Depends(require_permission("manage_cameras")),
+):
     """Start live pipelines for all cameras with real streams."""
     from backend.app.services.live_pipeline import live_manager
     cameras = db.query(Camera).filter(
@@ -1522,7 +1740,10 @@ stream_manager = StreamCaptureManager()
 
 
 @router.post("/hardware/power-off-all")
-def power_off_all_hardware(db: Session = Depends(get_db)):
+def power_off_all_hardware(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("camera_power")),
+):
     """Emergency release: completely shuts down all physical hardware cameras and releases sensors."""
     stream_manager.stop_all()
     try:
@@ -1536,7 +1757,11 @@ def power_off_all_hardware(db: Session = Depends(get_db)):
 
 
 @router.get("/{camera_id}/snapshot")
-def get_snapshot(camera_id: int, db: Session = Depends(get_db)):
+def get_snapshot(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("read")),
+):
     """
     Capture a single frame from camera, run detection, return as JPEG.
     Uses persistent StreamCaptureManager so hardware webcams stay warm and do not blink.
@@ -1593,7 +1818,13 @@ def get_snapshot(camera_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{camera_id}/stream")
 @router.get("/{camera_id}/mjpeg")
-async def mjpeg_stream(camera_id: int, request: Request, max_frames: Optional[int] = None, db: Session = Depends(get_db)):
+async def mjpeg_stream(
+    camera_id: int,
+    request: Request,
+    max_frames: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("read")),
+):
     """
     MJPEG live stream endpoint.
     Frontend connects via: <img src="/api/v1/cameras/{id}/stream">

@@ -61,15 +61,25 @@ export const CommandSearchModal: React.FC<Props> = ({
     { id: 'audit', name: 'Tamper-Evident Audit Ledger', category: 'Navigation', icon: '📜' },
     { id: 'health', name: 'Edge Node Diagnostics', category: 'Navigation', icon: '🩺' },
     { id: 'demo', name: 'War Gaming Scenarios & Simulation', category: 'Navigation', icon: '🎮' },
-  ].filter(p => !q || p.name.toLowerCase().includes(q) || p.id.includes(q));
+  ].filter(p => !q || (p.name || '').toLowerCase().includes(q) || (p.id || '').toLowerCase().includes(q));
 
-  const filteredCameras = cameras.filter(c => 
-    !q || c.name.toLowerCase().includes(q) || (c.bop && c.bop.toLowerCase().includes(q)) || (c.camera_type && c.camera_type.toLowerCase().includes(q))
-  );
+  const filteredCameras = (cameras || []).filter(c => {
+    if (!c) return false;
+    if (!q) return true;
+    const name = (c.name || '').toLowerCase();
+    const bop = (c.bop || '').toLowerCase();
+    const type = (c.camera_type || '').toLowerCase();
+    return name.includes(q) || bop.includes(q) || type.includes(q);
+  });
 
-  const filteredIncidents = incidents.filter(i =>
-    !q || i.incident_code.toLowerCase().includes(q) || i.title.toLowerCase().includes(q) || (i.severity && i.severity.toLowerCase().includes(q))
-  );
+  const filteredIncidents = (incidents || []).filter(i => {
+    if (!i) return false;
+    if (!q) return true;
+    const code = (i.incident_code || '').toLowerCase();
+    const title = (i.title || '').toLowerCase();
+    const sev = (i.severity || '').toLowerCase();
+    return code.includes(q) || title.includes(q) || sev.includes(q);
+  });
 
   return (
     <div className="cmd-k-overlay" onClick={onClose}>

@@ -150,9 +150,12 @@ export function LegalCertificateModal({ cert, onClose }: LegalCertificateModalPr
                   letterSpacing: 1,
                 }}
               >
-                ● 100% COURT ADMISSIBLE EVIDENCE
+                ● TECHNICAL CONTROLS ALIGNED WITH BSA §63
               </span>
             </div>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 10, color: 'var(--text-ghost)' }}>
+            Implemented technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements. Per-case statutory certificate generation remains an operational/legal prerequisite.
           </div>
 
           {/* Technical Specifications Matrix */}
@@ -299,9 +302,9 @@ export function LegalCertificateModal({ cert, onClose }: LegalCertificateModalPr
               padding: '10px 14px',
               borderRadius: 4,
               fontSize: 12,
-              background: verifyStatus.includes('✓') ? 'rgba(0, 255, 157, 0.12)' : 'rgba(255, 42, 85, 0.12)',
-              border: verifyStatus.includes('✓') ? '1px solid #00ff9d' : '1px solid #ff2a55',
-              color: verifyStatus.includes('✓') ? '#00ff9d' : '#ff7a8a',
+              background: String(verifyStatus).includes('✓') ? 'rgba(0, 255, 157, 0.12)' : 'rgba(255, 42, 85, 0.12)',
+              border: String(verifyStatus).includes('✓') ? '1px solid #00ff9d' : '1px solid #ff2a55',
+              color: String(verifyStatus).includes('✓') ? '#00ff9d' : '#ff7a8a',
             }}
           >
             {verifyStatus}

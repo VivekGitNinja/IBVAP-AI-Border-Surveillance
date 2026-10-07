@@ -334,6 +334,7 @@ class ErrorBoundary extends React.Component<
             style={{ padding: '10px 24px', background: '#00f0ff', color: '#02060c', border: 'none', borderRadius: 4, fontWeight: 'bold', cursor: 'pointer', letterSpacing: 1 }}
             onClick={() => {
               localStorage.removeItem('ibvap_token');
+              localStorage.removeItem('token');
               window.location.reload();
             }}
           >

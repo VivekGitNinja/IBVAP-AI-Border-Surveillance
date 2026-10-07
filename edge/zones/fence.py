@@ -14,6 +14,7 @@ Supports:
 from __future__ import annotations
 import math
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -26,6 +27,20 @@ from backend.app.services.geometry import (
     check_line_crossing,
     point_distance,
 )
+
+
+@dataclass
+class BoundaryContext:
+    """Authoritative same-frame boundary context for a target position."""
+    zone_id: int
+    zone_name: str
+    zone_type: str  # RESTRICTED, SENSITIVE, BUFFER, MONITORED, PUBLIC
+    boundary_segment: Tuple[Tuple[float, float], Tuple[float, float]]
+    inward_normal: Tuple[float, float]  # (nx, ny) unit vector pointing into zone
+    signed_distance: float              # Positive inside, negative outside
+    nearest_point: Tuple[float, float]
+    evaluated_at_frame: int
+    evaluated_at_timestamp: float
 
 
 class ZoneFence:
@@ -191,6 +206,7 @@ class ZoneFence:
                             "zone_id": zone_id,
                             "zone_name": name,
                             "zone_type": zone_type,
+                            "track_id": track_id,
                             "position": list(position),
                             "severity": severity,
                             "direction": dir_detected,
@@ -204,6 +220,7 @@ class ZoneFence:
                                 "zone_id": zone_id,
                                 "zone_name": name,
                                 "zone_type": zone_type,
+                                "track_id": track_id,
                                 "position": list(position),
                                 "severity": severity,
                                 "direction": dir_detected,
@@ -222,6 +239,7 @@ class ZoneFence:
                         "zone_id": zone_id,
                         "zone_name": name,
                         "zone_type": zone_type,
+                        "track_id": track_id,
                         "position": list(position),
                         "severity": severity,
                         "timestamp": now.isoformat(),
@@ -234,6 +252,7 @@ class ZoneFence:
                             "zone_id": zone_id,
                             "zone_name": name,
                             "zone_type": zone_type,
+                            "track_id": track_id,
                             "position": list(position),
                             "severity": severity,
                             "timestamp": now.isoformat(),
@@ -249,6 +268,7 @@ class ZoneFence:
                             "zone_id": zone_id,
                             "zone_name": name,
                             "zone_type": zone_type,
+                            "track_id": track_id,
                             "position": list(position),
                             "severity": severity,
                             "timestamp": now.isoformat(),
@@ -267,6 +287,7 @@ class ZoneFence:
                         "zone_id": zone_id,
                         "zone_name": name,
                         "zone_type": zone_type,
+                        "track_id": track_id,
                         "position": list(position),
                         "timestamp": now.isoformat(),
                     })
@@ -297,7 +318,12 @@ class ZoneFence:
         now_ts = now.timestamp()
         behavior_events: list[dict[str, Any]] = []
 
-        track_map = {t.track_id: t for t in tracks if getattr(t, "active", True)}
+        track_map = {}
+        for t in tracks:
+            tid = t.get("track_id") if isinstance(t, dict) else getattr(t, "track_id", None)
+            is_active = (t.get("state") in ("confirmed", "tentative") if "state" in t else True) if isinstance(t, dict) else getattr(t, "active", True)
+            if tid and is_active:
+                track_map[tid] = t
 
         for zone in self.zones:
             zone_id = zone.get("id", 0)
@@ -320,6 +346,7 @@ class ZoneFence:
                     if last_btime is None or (now_ts - last_btime) >= self.default_cooldown_seconds:
                         self._behavior_cooldowns[cooldown_key] = now_ts
                         t_obj = track_map[tid]
+                        t_pos = t_obj.get("center", [0, 0]) if isinstance(t_obj, dict) else getattr(t_obj, "center", [0, 0])
                         behavior_events.append({
                             "event_type": "loitering",
                             "track_id": tid,
@@ -327,7 +354,7 @@ class ZoneFence:
                             "zone_name": name,
                             "dwell_seconds": round(dwell_time, 1),
                             "threshold_seconds": dwell_thresh,
-                            "position": list(t_obj.center),
+                            "position": list(t_pos),
                             "severity": 0.75,
                             "timestamp": now.isoformat(),
                         })
@@ -357,25 +384,33 @@ class ZoneFence:
 
         # ── 3. RAPID MOVEMENT RULE ────────────────────────────────────────
         for t in tracks:
-            if not getattr(t, "active", True):
+            is_active = (t.get("state") in ("confirmed", "tentative") if "state" in t else True) if isinstance(t, dict) else getattr(t, "active", True)
+            if not is_active:
                 continue
-            speed = getattr(t, "speed_estimate", 0.0)
-            bbox = getattr(t, "last_bbox", {})
-            h = abs(bbox.get("y2", 0) - bbox.get("y1", 0)) if bbox else 0
+            speed = t.get("speed", 0.0) if isinstance(t, dict) else getattr(t, "speed_estimate", 0.0)
+            bbox = t.get("bbox", []) if isinstance(t, dict) else getattr(t, "last_bbox", {})
+            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                h = abs(bbox[3] - bbox[1])
+            elif isinstance(bbox, dict):
+                h = abs(bbox.get("y2", 0) - bbox.get("y1", 0))
+            else:
+                h = 0
 
             # Rapid condition: speed > threshold or > 3.5 body heights per sec
             is_rapid = speed >= self.rapid_speed_threshold or (h > 20 and (speed / h) >= 3.5)
             if is_rapid:
-                cooldown_key = ("rapid_movement", t.track_id)
+                tid = t.get("track_id", "") if isinstance(t, dict) else getattr(t, "track_id", "")
+                cooldown_key = ("rapid_movement", str(tid))
                 last_btime = self._behavior_cooldowns.get(cooldown_key)
                 if last_btime is None or (now_ts - last_btime) >= self.default_cooldown_seconds:
                     self._behavior_cooldowns[cooldown_key] = now_ts
+                    t_pos = t.get("center", [0, 0]) if isinstance(t, dict) else getattr(t, "center", [0, 0])
                     behavior_events.append({
                         "event_type": "rapid_movement",
-                        "track_id": t.track_id,
+                        "track_id": tid,
                         "speed": round(speed, 1),
                         "threshold": self.rapid_speed_threshold,
-                        "position": list(t.center),
+                        "position": list(t_pos),
                         "severity": 0.70,
                         "timestamp": now.isoformat(),
                     })
@@ -404,6 +439,105 @@ class ZoneFence:
                     return True
         return False
 
+    def get_nearest_boundary_context(
+        self,
+        position: Tuple[float, float],
+        frame_id: int = 0,
+        timestamp: float = 0.0,
+        frame_width: Optional[int] = None,
+        frame_height: Optional[int] = None,
+    ) -> BoundaryContext:
+        """Derive authoritative same-frame boundary context for a target anchor position."""
+        px, py = position
+        best_context: Optional[BoundaryContext] = None
+        min_abs_dist = float("inf")
+        priority_map = {"RESTRICTED": 0, "SENSITIVE": 1, "BUFFER": 2, "MONITORED": 3, "PUBLIC": 4}
+
+        for zone in self.zones:
+            g_type, points = self._resolve_geometry(zone, frame_width, frame_height)
+            if g_type != "polygon" or len(points) < 3:
+                continue
+
+            zone_id = zone.get("id", 0)
+            name = zone.get("name", f"Zone-{zone_id}")
+            zone_type = zone.get("zone_type", "BUFFER")
+            is_inside = point_in_polygon(position, points)
+
+            n_pts = len(points)
+            for i in range(n_pts):
+                p1 = points[i]
+                p2 = points[(i + 1) % n_pts]
+                seg_x = p2[0] - p1[0]
+                seg_y = p2[1] - p1[1]
+                seg_len_sq = seg_x * seg_x + seg_y * seg_y
+                if seg_len_sq < 1e-9:
+                    continue
+
+                t = ((px - p1[0]) * seg_x + (py - p1[1]) * seg_y) / seg_len_sq
+                t = max(0.0, min(1.0, t))
+                proj_x = p1[0] + t * seg_x
+                proj_y = p1[1] + t * seg_y
+                dist = math.hypot(px - proj_x, py - proj_y)
+
+                seg_len = math.sqrt(seg_len_sq)
+                cand_nx = -seg_y / seg_len
+                cand_ny = seg_x / seg_len
+                mid_x = (p1[0] + p2[0]) / 2.0
+                mid_y = (p1[1] + p2[1]) / 2.0
+
+                test_step = 1e-4 if max(abs(p1[0]), abs(p1[1])) <= 1.5 else 1.0
+                if point_in_polygon((mid_x + test_step * cand_nx, mid_y + test_step * cand_ny), points):
+                    inward_n = (cand_nx, cand_ny)
+                else:
+                    inward_n = (-cand_nx, -cand_ny)
+
+                signed_dist = dist if is_inside else -dist
+
+                is_candidate_better = False
+                if best_context is None:
+                    is_candidate_better = True
+                elif is_inside and best_context.signed_distance < 0:
+                    is_candidate_better = True
+                elif is_inside and best_context.signed_distance >= 0:
+                    prio_curr = priority_map.get(zone_type, 5)
+                    prio_best = priority_map.get(best_context.zone_type, 5)
+                    if prio_curr < prio_best:
+                        is_candidate_better = True
+                    elif prio_curr == prio_best and dist < min_abs_dist:
+                        is_candidate_better = True
+                elif not is_inside and best_context.signed_distance < 0:
+                    if dist < min_abs_dist:
+                        is_candidate_better = True
+
+                if is_candidate_better:
+                    min_abs_dist = dist
+                    best_context = BoundaryContext(
+                        zone_id=zone_id,
+                        zone_name=name,
+                        zone_type=zone_type,
+                        boundary_segment=((float(p1[0]), float(p1[1])), (float(p2[0]), float(p2[1]))),
+                        inward_normal=(round(inward_n[0], 4), round(inward_n[1], 4)),
+                        signed_distance=round(signed_dist, 4),
+                        nearest_point=(round(proj_x, 4), round(proj_y, 4)),
+                        evaluated_at_frame=frame_id,
+                        evaluated_at_timestamp=timestamp,
+                    )
+
+        if best_context is not None:
+            return best_context
+
+        return BoundaryContext(
+            zone_id=0,
+            zone_name="PUBLIC",
+            zone_type="PUBLIC",
+            boundary_segment=((0.0, 0.0), (1.0, 0.0)),
+            inward_normal=(0.0, 1.0),
+            signed_distance=-1.0,
+            nearest_point=(px, py),
+            evaluated_at_frame=frame_id,
+            evaluated_at_timestamp=timestamp,
+        )
+
     def cleanup_track(self, track_id: str) -> None:
         """Remove state for a completed track."""
         self._zone_states.pop(track_id, None)
@@ -416,6 +550,15 @@ class ZoneFence:
         keys_to_del_entry = [k for k in self._zone_entry_timestamps if k[0] == track_id]
         for k in keys_to_del_entry:
             del self._zone_entry_timestamps[k]
+
+    def reset(self) -> None:
+        """Reset all track states, entry timestamps, occupants, and cooldowns."""
+        self._zone_states.clear()
+        self._track_prev_positions.clear()
+        self._cooldowns.clear()
+        self._zone_entry_timestamps.clear()
+        self._zone_occupants.clear()
+        self._behavior_cooldowns.clear()
 
     def draw_zones_on_frame(
         self,

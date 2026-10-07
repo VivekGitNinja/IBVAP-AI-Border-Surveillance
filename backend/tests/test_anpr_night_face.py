@@ -13,8 +13,11 @@ from backend.app.services.anpr import anpr_engine
 from backend.app.services.face import face_service
 from backend.app.models.plate_read import PlateRead
 from backend.app.db.session import SessionLocal
+from backend.app.core.security import create_access_token
 
 client = TestClient(app)
+_token = create_access_token("operator-1", role="ADMIN")
+AUTH_HEADERS = {"Authorization": f"Bearer {_token}"}
 
 
 def test_anpr_pipeline_with_rendered_plate():
@@ -66,7 +69,7 @@ def test_plates_search_endpoint():
         db.commit()
         db.refresh(pr)
 
-        resp = client.get("/api/v1/plates?q=DL01")
+        resp = client.get("/api/v1/plates?q=DL01", headers=AUTH_HEADERS)
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
@@ -127,6 +130,7 @@ def test_watchlist_crud_lifecycle():
         "/api/v1/watchlist/enroll",
         data={"name": "No Face Subject", "notes": "Should Fail"},
         files={"file": ("blank.jpg", io.BytesIO(blank_encoded.tobytes()), "image/jpeg")},
+        headers=AUTH_HEADERS,
     )
     assert fail_resp.status_code == 422
     assert "no detectable face" in fail_resp.json().get("detail", "").lower()
@@ -147,6 +151,7 @@ def test_watchlist_crud_lifecycle():
         "/api/v1/watchlist/enroll",
         data={"name": "Suspect Alpha", "notes": "Border Sector Infiltration Risk"},
         files={"file": ("suspect.jpg", file_bytes, "image/jpeg")},
+        headers=AUTH_HEADERS,
     )
     assert resp.status_code == 201
     enrolled = resp.json()
@@ -155,17 +160,17 @@ def test_watchlist_crud_lifecycle():
     subject_id = enrolled["id"]
 
     # List
-    list_resp = client.get("/api/v1/watchlist")
+    list_resp = client.get("/api/v1/watchlist", headers=AUTH_HEADERS)
     assert list_resp.status_code == 200
     all_subjects = list_resp.json()
     assert any(s["id"] == subject_id for s in all_subjects)
 
     # Delete
-    del_resp = client.delete(f"/api/v1/watchlist/{subject_id}")
+    del_resp = client.delete(f"/api/v1/watchlist/{subject_id}", headers=AUTH_HEADERS)
     assert del_resp.status_code == 200
 
     # Confirm deletion
-    get_again = client.get("/api/v1/watchlist")
+    get_again = client.get("/api/v1/watchlist", headers=AUTH_HEADERS)
     assert not any(s["id"] == subject_id for s in get_again.json())
 
 

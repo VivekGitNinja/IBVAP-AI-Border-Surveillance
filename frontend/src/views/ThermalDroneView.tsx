@@ -21,9 +21,14 @@ export function ThermalDroneView({ cameras }: { cameras: Camera[] }) {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1>FLIR Thermal & Aerial Drone Reconnaissance (UAV)</h1>
-          <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary)' }}>
-            High-altitude border aerial surveillance simulator with multi-spectral thermal palettes (White-Hot, Black-Hot, Ironbow) and SAHI AI target tracking
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h1 style={{ margin: 0 }}>Multi-Spectral Colormap & Aerial Reconnaissance Simulator</h1>
+            <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: '#f59e0b22', color: '#f59e0b', border: '1px solid #f59e0b55', fontWeight: 600 }}>
+              SIMULATED TELEMETRY & POST-PROCESS COLORMAP
+            </span>
+          </div>
+          <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-secondary)' }}>
+            Client-side post-process false-color palette visualizer (White-Hot, Black-Hot, Ironbow) applied over optical CCTV feeds with simulated flight HUD telemetry. Not connected to a physical thermal sensor or drone hardware.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -37,26 +42,26 @@ export function ThermalDroneView({ cameras }: { cameras: Camera[] }) {
             className={`btn ${palette === 'white-hot' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => { playTacticalTone('click'); setPalette('white-hot'); }}
           >
-            White-Hot FLIR
+            White-Hot Filter
           </button>
           <button
             className={`btn ${palette === 'black-hot' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => { playTacticalTone('click'); setPalette('black-hot'); }}
           >
-            Black-Hot FLIR
+            Black-Hot Filter
           </button>
           <button
             className={`btn ${palette === 'ironbow' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => { playTacticalTone('click'); setPalette('ironbow'); }}
             style={{ background: palette === 'ironbow' ? 'linear-gradient(90deg, #7c3aed, #ea580c)' : undefined }}
           >
-            Ironbow Thermal
+            Ironbow Filter
           </button>
           <button
             className={`btn ${palette === 'rainbow' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => { playTacticalTone('click'); setPalette('rainbow'); }}
           >
-            Rainbow HC
+            Rainbow Filter
           </button>
         </div>
       </div>
@@ -84,26 +89,26 @@ export function ThermalDroneView({ cameras }: { cameras: Camera[] }) {
           <div className="drone-osd-overlay">
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <div>
-                <b style={{ color: '#00ff9d', fontSize: 13 }}>UAV FALCON-01 // AIRBORNE RECON</b>
-                <div style={{ fontSize: 10, color: 'var(--text-ghost)' }}>MODE: {flightMode} • SAT-LINK: LOCK (14 SATS)</div>
+                <b style={{ color: '#00ff9d', fontSize: 13 }}>UAV FALCON-01 // AIRBORNE RECON [SIMULATOR]</b>
+                <div style={{ fontSize: 10, color: 'var(--text-ghost)' }}>MODE: {flightMode} • HUD: SIMULATED (NO HARDWARE UAV)</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <b style={{ color: '#00f0ff' }}>FLIR PALETTE: {palette.toUpperCase()}</b>
-                <div style={{ fontSize: 10, color: '#00ff9d' }}>BATTERY: {battery}% • REMAINING: 38 MINS</div>
+                <b style={{ color: '#00f0ff' }}>COLORMAP FILTER: {palette.toUpperCase()}</b>
+                <div style={{ fontSize: 10, color: '#00ff9d' }}>BATTERY: {battery}% • REMAINING: 38 MINS (SIM)</div>
               </div>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
               <div>
-                <div>ALT: <b>{alt}m AGL</b></div>
-                <div>SPD: <b>{speed} km/h</b></div>
+                <div>ALT: <b>{alt}m AGL</b> (SIM)</div>
+                <div>SPD: <b>{speed} km/h</b> (SIM)</div>
                 <div>HDG: <b>042° NE</b></div>
                 <div>PITCH: <b>-32.4°</b></div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 {targetLocked && (
                   <div style={{ border: '1px solid #ff2a55', background: 'rgba(255, 42, 85, 0.2)', color: '#ff2a55', padding: '4px 12px', borderRadius: 4, fontWeight: 800, letterSpacing: 2 }}>
-                    [ TARGET THERMAL SIGNATURE LOCKED ]
+                    [ SIMULATED TARGET TRACK ]
                   </div>
                 )}
               </div>
@@ -220,6 +225,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
             }}
             onClick={() => {
               localStorage.removeItem('ibvap_token');
+              localStorage.removeItem('token');
               window.location.reload();
             }}
           >

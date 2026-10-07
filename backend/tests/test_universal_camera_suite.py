@@ -4,12 +4,19 @@ import pytest
 from fastapi.testclient import TestClient
 from backend.app.main import app
 
+from backend.app.core.security import create_access_token
+
 client = TestClient(app)
+
+
+def _get_headers(role: str = "ADMIN"):
+    token = create_access_token("admin_test", role)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_network_info_endpoint():
     """Verify /cameras/network-info returns auto-detected LAN subnet and local IP."""
-    resp = client.get("/api/v1/cameras/network-info")
+    resp = client.get("/api/v1/cameras/network-info", headers=_get_headers())
     assert resp.status_code == 200
     data = resp.json()
     assert "subnet" in data
@@ -19,7 +26,7 @@ def test_network_info_endpoint():
 
 def test_deep_camera_discovery():
     """Verify /cameras/discover detects connected devices on subnet."""
-    resp = client.post("/api/v1/cameras/discover", json={"ip_range": "192.168.29", "start": 1, "end": 20})
+    resp = client.post("/api/v1/cameras/discover", headers=_get_headers(), json={"ip_range": "192.168.29", "start": 1, "end": 20})
     assert resp.status_code == 200
     devices = resp.json()
     assert isinstance(devices, list)
@@ -33,8 +40,8 @@ def test_deep_camera_discovery():
 
 def test_smart_probe_endpoint():
     """Verify Strix-style smart probe tests patterns in < 2 seconds."""
-    resp = client.post("/api/v1/cameras/smart-probe", json={
-        "ip": "127.0.0.1",
+    resp = client.post("/api/v1/cameras/smart-probe", headers=_get_headers(), json={
+        "ip": "192.168.1.200",
         "username": "admin",
         "password": "testpassword",
     })
@@ -55,17 +62,17 @@ def test_phone_stream_upload_and_test():
     b64 = base64.b64encode(buf).decode()
 
     # 1. Upload frame
-    up = client.post("/api/v1/cameras/phone-stream/mobile-test/frame", json={"image": b64})
+    up = client.post("/api/v1/cameras/phone-stream/mobile-test/frame", headers=_get_headers(), json={"image": b64})
     assert up.status_code == 200
     assert up.json()["status"] == "ok"
 
     # 2. Get frame back
-    down = client.get("/api/v1/cameras/phone-stream/mobile-test/frame")
+    down = client.get("/api/v1/cameras/phone-stream/mobile-test/frame", headers=_get_headers())
     assert down.status_code == 200
     assert down.headers["content-type"] == "image/jpeg"
 
     # 3. Test stream
-    ts = client.post("/api/v1/cameras/test-stream", json={"stream_url": "phone://mobile-test"})
+    ts = client.post("/api/v1/cameras/test-stream", headers=_get_headers(), json={"stream_url": "phone://mobile-test"})
     assert ts.status_code == 200
     assert ts.json()["success"] is True
 
@@ -107,7 +114,7 @@ def test_camera_patch_and_map_endpoint():
         assert pdata["sector"] == "Sector Echo"
 
         # 2. Test GET /api/v1/map retrieves camera & sector metrics
-        map_resp = client.get("/api/v1/map")
+        map_resp = client.get("/api/v1/map", headers=headers)
         assert map_resp.status_code == 200
         mdata = map_resp.json()
         assert mdata["status"] == "ready"

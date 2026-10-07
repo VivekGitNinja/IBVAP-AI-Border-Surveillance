@@ -77,7 +77,7 @@ export const useTacticalStore = create<TacticalState>((set, get) => ({
   isMuted: typeof localStorage !== 'undefined' ? localStorage.getItem('ibvap_muted') === 'true' : false,
   wsStatus: 'disconnected',
   toasts: [],
-  showLoginModal: typeof localStorage !== 'undefined' ? !localStorage.getItem('ibvap_token') : false,
+  showLoginModal: typeof localStorage !== 'undefined' ? !(localStorage.getItem('ibvap_token') || localStorage.getItem('token')) : false,
   currentUser: null,
   busy: false,
   demoMsg: '',
@@ -143,6 +143,10 @@ export const useTacticalStore = create<TacticalState>((set, get) => ({
         status: s,
         scenarios: Array.isArray(sc) ? sc : [],
       });
+
+      if (typeof localStorage !== 'undefined' && (localStorage.getItem('ibvap_token') || localStorage.getItem('token'))) {
+        api.me().then((u) => set({ currentUser: u })).catch(() => {});
+      }
     } catch {
       /* resilient fallback */
     }

@@ -12,6 +12,7 @@ from backend.app.main import app
 from backend.app.db.session import engine
 from backend.app.db.migrator import DatabaseMigrator
 from backend.app.core.cache import cache, cached, invalidate_cache
+from backend.app.core.security import create_access_token
 from backend.app.models.incident import Incident
 from backend.app.models.audit import AuditLog
 from backend.app.models.camera import Camera
@@ -98,7 +99,8 @@ def test_cached_function_decorator():
 
 def test_cached_system_status_api(client):
     """Verify /api/v1/status endpoint utilizes caching without breaking response schema."""
-    response = client.get("/api/v1/status")
+    token = create_access_token("operator", "OPERATOR")
+    response = client.get("/api/v1/status", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "operational"

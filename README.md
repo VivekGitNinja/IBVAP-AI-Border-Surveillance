@@ -18,7 +18,7 @@ Modern international borders, critical infrastructure zones, and Forward Operati
 
 **IBVAP (Intelligent Border & Perimeter Video Analytics Platform)** is an air-gapped, edge-native C4ISR (Command, Control, Communications, Computers, Intelligence, Surveillance, and Reconnaissance) software platform designed from first principles for tactical deployment. It transforms heterogeneous sensor streams (fixed CCTV, long-range PTZ cameras, night-vision electro-optical/infrared (EO/IR) turrets, tethered drones, and forensic patrol footage) into actionable, real-time tactical intelligence directly on localized edge hardware.
 
-Operating with **zero cloud dependencies** and **zero external network egress**, IBVAP delivers sub-30ms neural perception, deep multi-target trajectory tracking, biometric suspect identification, automated checkpoint vehicle interdiction, explainable threat scoring, and court-admissible forensic evidence vaults complying with statutory evidence standards.
+Operating with **zero cloud dependencies** and **zero external network egress**, IBVAP delivers sub-30ms neural perception, deep multi-target trajectory tracking, biometric suspect identification, automated checkpoint vehicle interdiction, explainable threat scoring, and forensic evidence vaults with technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements.
 
 ---
 
@@ -94,7 +94,7 @@ The platform follows a modular, pipeline-isolated architecture optimized for asy
         │       BSA 2023 §63 FORENSIC EVIDENCE VAULT   │ │       C4ISR COMMAND & CONTROL CONSOLE        │
         │  • Cryptographic SHA-256 Merkle Chaining     │ │  • Real-Time WebSocket Telemetry Matrix      │
         │  • Tamper-Evident Manifest (.json) Archiving │ │  • GIS Geospatial Tactical Sector Map        │
-        │  • Court-Admissible Forensic PDF Generator   │ │  • ANPR Intercept Barrier Servo Relay        │
+        │  • Forensic Evidence PDF Export Generator    │ │  • ANPR Intercept Barrier Servo Relay        │
         │  • ISO/IEC 27037 Digital Custody Audit Log   │ │  • Automated QRT Scramble & SITREP Dispatch  │
         └──────────────────────────────────────────────┘ └──────────────────────────────────────────────┘
 ```
@@ -164,7 +164,7 @@ Where:
 
 ## 7. BSA 2023 Section 63 Cryptographic Evidence Vault
 
-Under modern judicial standards—including the **Bharatiya Sakshya Adhiniyam (BSA) 2023, Section 63** (admissibility of electronic records) and international **ISO/IEC 27037** digital evidence handling guidelines—unverified digital video files are routinely challenged and thrown out of court.
+Under modern statutory frameworks—including the **Bharatiya Sakshya Adhiniyam (BSA) 2023, Section 63** (electronic records) and international **ISO/IEC 27037** digital evidence handling guidelines—unverified digital video files are routinely challenged.
 
 IBVAP contains an automated, tamper-evident cryptographic evidence pipeline:
 
@@ -178,7 +178,7 @@ IBVAP contains an automated, tamper-evident cryptographic evidence pipeline:
 1. **Deterministic Cryptographic Hashing**: Every incident clip, raw high-resolution frame crop, and operator action is hashed using **SHA-256**:
    3122\mathcal{H}_{\text{evidence}} = \text{SHA256}(\text{RawFrameBytes} \,\|\, \text{Timestamp}_{\text{UTC}} \,\|\, \text{CameraUUID})3122
 2. **Tamper-Evident Audit Manifests**: Hashed entries are appended to an immutable JSON-based chain-of-custody ledger with operator sign-offs. Any subsequent byte modification breaks the cryptographic hash validation.
-3. **Automated Forensic Certificate Generation**: Generates court-admissible PDF legal certificates featuring the full cryptographic hash, camera calibration parameters, operator clearance identifier, and statutory declaration text complying with Section 63 of BSA 2023.
+3. **Automated Forensic Certificate Generation**: Implemented technical controls aligned with Bharatiya Sakshya Adhiniyam, 2023 Section 63 requirements. Generates PDF legal certificates featuring cryptographic hash verification, camera calibration parameters, operator clearance identifier, and statutory declaration text. Per-case statutory certificate generation remains an operational/legal prerequisite.
 
 ---
 
@@ -325,7 +325,7 @@ IBVAP maintains a **100% passing automated test suite with 188 dedicated test ca
 | `/api/v1/anpr/scan` | `POST` | `OPERATOR` | Executes HSRP OCR with character slot repair and stolen vehicle intercept. |
 | `/api/v1/anpr/watchlist` | `GET / POST` | `COMMANDER` | Enrolls high-risk vehicle registration targets for automated barrier interdiction. |
 | `/api/v1/incidents` | `GET / POST` | `OPERATOR` | Queries fused threat events with spatiotemporal coordinate metadata. |
-| `/api/v1/evidence/{id}/export` | `GET` | `COMMANDER` | Generates BSA 2023 Section 63 compliant tamper-evident PDF certificates. |
+| `/api/v1/evidence/{id}/export` | `GET` | `COMMANDER` | Generates BSA 2023 Section 63 tamper-evident PDF certificates (technical controls aligned with Section 63; per-case statutory certificate generation remains an operational/legal prerequisite). |
 | `/api/v1/media-analysis/upload`| `POST` | `OPERATOR` | Ingests offline surveillance media for asynchronous CV forensics processing. |
 
 ---

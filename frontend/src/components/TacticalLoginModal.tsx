@@ -20,6 +20,7 @@ export const TacticalLoginModal: React.FC<TacticalLoginModalProps> = ({ onSucces
       const res = await api.login(username, password);
       if (res && res.access_token) {
         localStorage.setItem('ibvap_token', res.access_token);
+        localStorage.setItem('token', res.access_token);
         const me = await api.me().catch(() => ({ username, role: 'OPERATOR' }));
         onSuccess(me);
       } else {

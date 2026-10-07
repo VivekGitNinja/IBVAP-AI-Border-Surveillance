@@ -48,8 +48,8 @@ export function serializeTacticalParams(params: TacticalShareParams): string {
 /**
  * Parses URL search string or full URL into typed tactical parameters.
  */
-export function parseTacticalParams(searchOrUrl: string): TacticalShareParams {
-  let search = searchOrUrl;
+export function parseTacticalParams(searchOrUrl?: string | null): TacticalShareParams {
+  let search = String(searchOrUrl || '');
   if (search.includes('?')) {
     search = search.substring(search.indexOf('?') + 1);
   }

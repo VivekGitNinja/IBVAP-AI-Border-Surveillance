@@ -12,13 +12,19 @@ from fastapi.testclient import TestClient
 from backend.app.main import app
 from backend.app.models.camera import Camera
 from backend.app.db.session import SessionLocal
+from backend.app.core.security import create_access_token
 
 client = TestClient(app)
 
 
+def auth_headers(role="ADMIN"):
+    token = create_access_token("test-live-admin", role)
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_camera_test_invalid_camera():
     """Assert 404 on testing non-existent camera."""
-    response = client.post("/api/v1/cameras/999999/test")
+    response = client.post("/api/v1/cameras/999999/test", headers=auth_headers())
     assert response.status_code == 404
 
 
@@ -35,7 +41,7 @@ def test_camera_test_no_stream_url():
         db.add(cam)
         db.commit()
 
-        response = client.post(f"/api/v1/cameras/{cam.id}/test")
+        response = client.post(f"/api/v1/cameras/{cam.id}/test", headers=auth_headers())
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
@@ -58,7 +64,7 @@ def test_camera_mjpeg_stream_header():
         db.add(cam)
         db.commit()
 
-        with client.stream("GET", f"/api/v1/cameras/{cam.id}/mjpeg?max_frames=2") as response:
+        with client.stream("GET", f"/api/v1/cameras/{cam.id}/mjpeg?max_frames=2", headers=auth_headers()) as response:
             assert response.status_code == 200
             assert "multipart/x-mixed-replace" in response.headers.get("content-type", "")
             for chunk in response.iter_raw():
@@ -73,6 +79,7 @@ def test_analysis_live_window_invalid_camera():
     response = client.post(
         "/api/v1/analysis/live-window",
         json={"camera_id": 999999, "seconds": 2},
+        headers=auth_headers(),
     )
     assert response.status_code == 404
 
@@ -103,6 +110,7 @@ def test_analysis_live_window_execution():
                 "enable_face": True,
                 "enable_zones": False,
             },
+            headers=auth_headers(),
         )
         assert response.status_code == 200
         data = response.json()

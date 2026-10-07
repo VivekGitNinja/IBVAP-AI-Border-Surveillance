@@ -1,6 +1,6 @@
 """Forensic & Tactical Report generation service (JSON & PDF).
 
-Compliant with Bharatiya Sakshya Adhiniyam, 2023 §63 for court admissibility of electronic records.
+Compliant with Bharatiya Sakshya Adhiniyam, 2023 §63 for evidential integrity and statutory conditions of electronic records.
 """
 
 from __future__ import annotations
@@ -234,7 +234,7 @@ def generate_pdf_report(report_data: Dict[str, Any]) -> bytes:
 
         # Header
         story.append(Paragraph("INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM (IBVAP)", title_style))
-        story.append(Paragraph("Tactical Video Forensics & Evidence Admissibility Report", subtitle_style))
+        story.append(Paragraph("Tactical Video Forensics & Statutory Evidence Integrity Report", subtitle_style))
         story.append(Paragraph(f"Statutory Authority: {report_data['bsa_section_63_certificate']['statute']}", subtitle_style))
         story.append(Spacer(1, 10))
         story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#0284c7"), spaceAfter=10))
@@ -350,7 +350,7 @@ def _generate_native_pdf(report_data: Dict[str, Any]) -> bytes:
     # Text content assembly
     lines = [
         "INTELLIGENT BORDER VIDEO ANALYTICS PLATFORM (IBVAP)",
-        "Tactical Video Forensics & Evidence Admissibility Report",
+        "Tactical Video Forensics & Statutory Evidence Integrity Report",
         f"Statutory Citation: {report_data['bsa_section_63_certificate']['statute']}",
         "-" * 72,
         f"Report ID: {report_data['report_id']}",
